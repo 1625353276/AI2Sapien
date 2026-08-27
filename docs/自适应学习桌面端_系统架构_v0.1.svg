@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">AI2Sapien 人工智人系统架构 v0.1</title>
+  <desc id="desc">从 React 学习界面，经由安全 IPC 进入本地 Learning Core；核心连接文档处理、本地数据库、多 Agent 编排与 Codex App Server，后者使用官方 ChatGPT 登录。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f8ff"/>
+      <stop offset="1" stop-color="#eef7f4"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#23324d" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 z" fill="#53627a"/>
+    </marker>
+    <style>
+      .title{font:700 38px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#182238}
+      .subtitle{font:400 18px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#58657b}
+      .lane-title{font:700 22px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#24324a}
+      .box-title{font:700 18px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#17223a}
+      .box-text{font:400 15px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#42516a}
+      .small{font:400 14px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#5b6880}
+      .chip{font:600 14px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#27344c}
+      .flow{fill:none;stroke:#53627a;stroke-width:2.5;marker-end:url(#arrow)}
+      .flow-dashed{fill:none;stroke:#6f7c91;stroke-width:2.2;stroke-dasharray:8 7;marker-end:url(#arrow)}
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#bg)"/>
+  <text x="80" y="72" class="title">AI2Sapien · 人工智人 · 系统架构 v0.1</text>
+  <text x="80" y="107" class="subtitle">本地优先 · ChatGPT 官方登录 · 多 Agent 学习闭环 · 来源与图片可追溯</text>
+
+  <rect x="65" y="145" width="390" height="560" rx="26" fill="#ffffff" stroke="#d9deec" filter="url(#shadow)"/>
+  <text x="95" y="188" class="lane-title">学习界面 · React Renderer</text>
+
+  <rect x="95" y="220" width="330" height="92" rx="16" fill="#edf1ff" stroke="#bdc8f3"/>
+  <text x="120" y="253" class="box-title">材料阅读器</text>
+  <text x="120" y="281" class="box-text">PDF/PPT · 划词/框图 · 来源定位</text>
+
+  <rect x="95" y="330" width="330" height="92" rx="16" fill="#fff3dc" stroke="#efd19b"/>
+  <text x="120" y="363" class="box-title">即时解释弹窗</text>
+  <text x="120" y="391" class="box-text">原理 · 对比 · 图片 · 连续追问</text>
+
+  <rect x="95" y="440" width="330" height="92" rx="16" fill="#ebf8f1" stroke="#abd9c3"/>
+  <text x="120" y="473" class="box-title">题库与补救学习</text>
+  <text x="120" y="501" class="box-text">诊断 · 批改 · 为什么 · 定向复测</text>
+
+  <rect x="95" y="550" width="330" height="92" rx="16" fill="#f6edfb" stroke="#d7bce6"/>
+  <text x="120" y="583" class="box-title">知识图谱与进度</text>
+  <text x="120" y="611" class="box-text">0–5 掌握度 · 证据 · 间隔复习</text>
+
+  <rect x="495" y="145" width="600" height="560" rx="26" fill="#ffffff" stroke="#d9deec" filter="url(#shadow)"/>
+  <text x="525" y="188" class="lane-title">本地 Learning Core · Electron Main</text>
+
+  <rect x="525" y="220" width="540" height="72" rx="16" fill="#f2f5fa" stroke="#cbd3e0"/>
+  <text x="550" y="250" class="box-title">Preload 安全桥 / API Gateway</text>
+  <text x="550" y="274" class="small">Typed IPC · OpenAPI operationId · 权限与输入校验</text>
+
+  <rect x="525" y="315" width="252" height="108" rx="16" fill="#edf1ff" stroke="#bdc8f3"/>
+  <text x="550" y="347" class="box-title">Document Pipeline</text>
+  <text x="550" y="374" class="box-text">解析 · OCR · 页面图</text>
+  <text x="550" y="398" class="box-text">分块 · 图片抽取</text>
+
+  <rect x="813" y="315" width="252" height="108" rx="16" fill="#ebf8f1" stroke="#abd9c3"/>
+  <text x="838" y="347" class="box-title">Learning Engine</text>
+  <text x="838" y="374" class="box-text">概念 · 测评 · 补救</text>
+  <text x="838" y="398" class="box-text">掌握度 · 复习队列</text>
+
+  <rect x="525" y="447" width="252" height="108" rx="16" fill="#fff3dc" stroke="#efd19b"/>
+  <text x="550" y="479" class="box-title">Agent Orchestrator</text>
+  <text x="550" y="506" class="box-text">任务图 · 门禁 · 重试</text>
+  <text x="550" y="530" class="box-text">结构化 Artifact</text>
+
+  <rect x="813" y="447" width="252" height="108" rx="16" fill="#f6edfb" stroke="#d7bce6"/>
+  <text x="838" y="479" class="box-title">Run &amp; Event Hub</text>
+  <text x="838" y="506" class="box-text">流式事件 · 恢复</text>
+  <text x="838" y="530" class="box-text">审批 · 错误映射</text>
+
+  <rect x="525" y="579" width="540" height="78" rx="16" fill="#eaf6fb" stroke="#afd4e2"/>
+  <text x="550" y="610" class="box-title">Codex Adapter</text>
+  <text x="550" y="636" class="box-text">协议版本隔离 · Thread/Turn 映射 · JSON Schema 校验</text>
+
+  <path d="M455 425 C475 425,475 255,495 255" class="flow"/>
+  <text x="458" y="333" class="small" transform="rotate(-90 458 333)">Typed IPC</text>
+
+  <rect x="1135" y="145" width="400" height="560" rx="26" fill="#ffffff" stroke="#d9deec" filter="url(#shadow)"/>
+  <text x="1165" y="188" class="lane-title">运行时与本地数据</text>
+
+  <rect x="1165" y="220" width="340" height="98" rx="16" fill="#f2f5fa" stroke="#cbd3e0"/>
+  <text x="1190" y="253" class="box-title">SQLite</text>
+  <text x="1190" y="280" class="box-text">课程 · 概念 · 作答 · 学习证据</text>
+  <text x="1190" y="303" class="small">掌握度可由证据重建</text>
+
+  <rect x="1165" y="340" width="340" height="98" rx="16" fill="#edf1ff" stroke="#bdc8f3"/>
+  <text x="1190" y="373" class="box-title">本地 Artifact Store</text>
+  <text x="1190" y="400" class="box-text">原始资料 · 页面图 · 题图 · 补救图</text>
+  <text x="1190" y="423" class="small">存在/解码/尺寸/alt/渲染硬校验</text>
+
+  <rect x="1165" y="460" width="340" height="112" rx="16" fill="#17223a" stroke="#17223a"/>
+  <text x="1190" y="496" style="font:700 19px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#ffffff">Codex App Server</text>
+  <text x="1190" y="526" style="font:400 15px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#d8e0f1">stdio JSONL · JSON-RPC 2.0</text>
+  <text x="1190" y="551" style="font:400 15px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#d8e0f1">认证 · Thread · Turn · 事件 · 审批</text>
+
+  <rect x="1165" y="594" width="340" height="70" rx="35" fill="#10a37f"/>
+  <text x="1335" y="624" text-anchor="middle" style="font:700 18px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#ffffff">官方 ChatGPT 登录</text>
+  <text x="1335" y="649" text-anchor="middle" style="font:400 14px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#eafff9">套餐状态与 Codex 用量窗口</text>
+
+  <path d="M1095 350 C1115 350,1115 270,1135 270" class="flow"/>
+  <path d="M1095 390 C1115 390,1115 389,1135 389" class="flow"/>
+  <path d="M1095 618 C1120 618,1120 516,1165 516" class="flow"/>
+  <path d="M1335 572 L1335 594" class="flow"/>
+
+  <rect x="65" y="750" width="1470" height="185" rx="26" fill="#ffffff" stroke="#d9deec" filter="url(#shadow)"/>
+  <text x="95" y="793" class="lane-title">受控的多 Agent 学习链</text>
+
+  <g>
+    <rect x="95" y="825" width="150" height="64" rx="18" fill="#edf1ff" stroke="#bdc8f3"/>
+    <text x="170" y="851" text-anchor="middle" class="chip">材料分析</text>
+    <text x="170" y="874" text-anchor="middle" class="small">带来源证据</text>
+
+    <rect x="285" y="825" width="150" height="64" rx="18" fill="#edf1ff" stroke="#bdc8f3"/>
+    <text x="360" y="851" text-anchor="middle" class="chip">知识映射</text>
+    <text x="360" y="874" text-anchor="middle" class="small">用户确认范围</text>
+
+    <rect x="475" y="825" width="150" height="64" rx="18" fill="#fff3dc" stroke="#efd19b"/>
+    <text x="550" y="851" text-anchor="middle" class="chip">设计题目</text>
+    <text x="550" y="874" text-anchor="middle" class="small">独立验题</text>
+
+    <rect x="665" y="825" width="150" height="64" rx="18" fill="#ebf8f1" stroke="#abd9c3"/>
+    <text x="740" y="851" text-anchor="middle" class="chip">评价答案</text>
+    <text x="740" y="874" text-anchor="middle" class="small">逐评分点</text>
+
+    <rect x="855" y="825" width="150" height="64" rx="18" fill="#f6edfb" stroke="#d7bce6"/>
+    <text x="930" y="851" text-anchor="middle" class="chip">分析误区</text>
+    <text x="930" y="874" text-anchor="middle" class="small">解释为什么</text>
+
+    <rect x="1045" y="825" width="150" height="64" rx="18" fill="#f6edfb" stroke="#d7bce6"/>
+    <text x="1120" y="851" text-anchor="middle" class="chip">视觉补救</text>
+    <text x="1120" y="874" text-anchor="middle" class="small">图片 + 机制</text>
+
+    <rect x="1235" y="825" width="150" height="64" rx="18" fill="#ebf8f1" stroke="#abd9c3"/>
+    <text x="1310" y="851" text-anchor="middle" class="chip">定向复测</text>
+    <text x="1310" y="874" text-anchor="middle" class="small">迁移证据</text>
+
+    <rect x="1425" y="825" width="80" height="64" rx="18" fill="#17223a"/>
+    <text x="1465" y="851" text-anchor="middle" style="font:700 14px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#fff">掌握度</text>
+    <text x="1465" y="874" text-anchor="middle" style="font:400 13px 'Microsoft YaHei','Segoe UI',sans-serif;fill:#d8e0f1">0–5</text>
+
+    <path d="M245 857 L285 857" class="flow"/>
+    <path d="M435 857 L475 857" class="flow"/>
+    <path d="M625 857 L665 857" class="flow"/>
+    <path d="M815 857 L855 857" class="flow"/>
+    <path d="M1005 857 L1045 857" class="flow"/>
+    <path d="M1195 857 L1235 857" class="flow"/>
+    <path d="M1385 857 L1425 857" class="flow"/>
+  </g>
+
+  <text x="80" y="972" class="small">稳定边界：Renderer 不接触 Token、文件系统或原始 App Server 通道；Agent 产物先过 Schema 与证据/媒体门禁，再写入学习数据。</text>
+</svg>

@@ -1,0 +1,1845 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Adaptive Learning Core API",
+    "version": "0.1.0",
+    "description": "自适应学习桌面端的稳定业务契约。Electron 首版可把 operationId 映射为 Typed IPC；HTTP 形态用于 mock、测试和未来本地伴随服务。"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:{port}",
+      "description": "可选的本地 HTTP 适配器；不应监听公网地址。",
+      "variables": {
+        "port": {
+          "default": "4587"
+        }
+      }
+    }
+  ],
+  "tags": [
+    { "name": "System" },
+    { "name": "Auth" },
+    { "name": "Courses" },
+    { "name": "Documents" },
+    { "name": "Concepts" },
+    { "name": "Tutor" },
+    { "name": "Assessments" },
+    { "name": "Adaptive Learning" },
+    { "name": "Runs" }
+  ],
+  "paths": {
+    "/v1/system/capabilities": {
+      "get": {
+        "tags": ["System"],
+        "operationId": "getSystemCapabilities",
+        "summary": "检测本机运行与材料处理能力",
+        "responses": {
+          "200": {
+            "description": "能力状态",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SystemCapabilities" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/auth/chatgpt/login-sessions": {
+      "post": {
+        "tags": ["Auth"],
+        "operationId": "startChatGptLogin",
+        "summary": "启动官方 ChatGPT 登录流程",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "登录会话已创建",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LoginSession" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/auth/session": {
+      "get": {
+        "tags": ["Auth"],
+        "operationId": "getAuthSession",
+        "summary": "读取当前认证状态",
+        "responses": {
+          "200": {
+            "description": "认证状态",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuthSession" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Auth"],
+        "operationId": "logout",
+        "summary": "退出当前 ChatGPT/Codex 会话",
+        "responses": {
+          "204": { "description": "已退出" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/auth/rate-limits": {
+      "get": {
+        "tags": ["Auth"],
+        "operationId": "getRateLimits",
+        "summary": "读取 ChatGPT/Codex 使用窗口",
+        "responses": {
+          "200": {
+            "description": "用量窗口",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimits" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses": {
+      "get": {
+        "tags": ["Courses"],
+        "operationId": "listCourses",
+        "summary": "列出课程",
+        "responses": {
+          "200": {
+            "description": "课程列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Course" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Courses"],
+        "operationId": "createCourse",
+        "summary": "创建课程",
+        "parameters": [
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CourseCreate" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "课程已创建",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Course" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/CourseId" }
+      ],
+      "get": {
+        "tags": ["Courses"],
+        "operationId": "getCourse",
+        "summary": "读取课程",
+        "responses": {
+          "200": {
+            "description": "课程",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Course" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Courses"],
+        "operationId": "updateCourse",
+        "summary": "更新课程元数据",
+        "parameters": [
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CourseUpdate" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "课程已更新",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Course" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Courses"],
+        "operationId": "deleteCourse",
+        "summary": "删除课程及其本地学习数据",
+        "description": "破坏性操作；UI 必须二次确认并先提供导出选项。",
+        "responses": {
+          "204": { "description": "已删除" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}/documents": {
+      "parameters": [
+        { "$ref": "#/components/parameters/CourseId" }
+      ],
+      "get": {
+        "tags": ["Documents"],
+        "operationId": "listDocuments",
+        "summary": "列出课程资料",
+        "responses": {
+          "200": {
+            "description": "资料列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Document" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Documents"],
+        "operationId": "uploadDocument",
+        "summary": "上传一份课程资料",
+        "parameters": [
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": { "type": "string", "format": "binary" },
+                  "displayName": { "type": "string" },
+                  "language": { "type": "string", "default": "auto" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "文件已安全落盘，尚未必完成解析",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Document" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/documents/{documentId}": {
+      "get": {
+        "tags": ["Documents"],
+        "operationId": "getDocument",
+        "summary": "读取文档状态",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "文档",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Document" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/documents/{documentId}/process": {
+      "post": {
+        "tags": ["Documents"],
+        "operationId": "processDocument",
+        "summary": "启动文档解析、OCR、页面渲染和分块",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DocumentProcessRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "$ref": "#/components/responses/AsyncAccepted" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/documents/{documentId}/pages/{pageNumber}": {
+      "get": {
+        "tags": ["Documents"],
+        "operationId": "getDocumentPage",
+        "summary": "读取页面/幻灯片及预览信息",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" },
+          { "$ref": "#/components/parameters/PageNumber" }
+        ],
+        "responses": {
+          "200": {
+            "description": "页面",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DocumentPage" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/documents/{documentId}/chunks": {
+      "get": {
+        "tags": ["Documents"],
+        "operationId": "listSourceChunks",
+        "summary": "分页读取来源块",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": {
+            "description": "来源块",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items", "nextCursor"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/SourceChunk" }
+                    },
+                    "nextCursor": { "type": ["string", "null"] }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}/concept-extractions": {
+      "post": {
+        "tags": ["Concepts"],
+        "operationId": "extractConcepts",
+        "summary": "从已处理材料生成候选知识地图",
+        "parameters": [
+          { "$ref": "#/components/parameters/CourseId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConceptExtractionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "$ref": "#/components/responses/AsyncAccepted" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}/concepts": {
+      "get": {
+        "tags": ["Concepts"],
+        "operationId": "listConcepts",
+        "summary": "列出概念与依赖",
+        "parameters": [
+          { "$ref": "#/components/parameters/CourseId" },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/ConceptStatus" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "知识地图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items", "mapVersion"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Concept" }
+                    },
+                    "mapVersion": { "type": "integer", "minimum": 1 }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/concepts/{conceptId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ConceptId" }
+      ],
+      "get": {
+        "tags": ["Concepts"],
+        "operationId": "getConcept",
+        "summary": "读取概念",
+        "responses": {
+          "200": {
+            "description": "概念",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Concept" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Concepts"],
+        "operationId": "updateConcept",
+        "summary": "编辑候选或已确认概念",
+        "parameters": [
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConceptUpdate" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "概念已更新",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Concept" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/concepts/{conceptId}/confirm": {
+      "post": {
+        "tags": ["Concepts"],
+        "operationId": "confirmConcept",
+        "summary": "确认单个概念",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConceptId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "已确认概念",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Concept" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}/concept-map/confirm": {
+      "post": {
+        "tags": ["Concepts"],
+        "operationId": "confirmConceptMap",
+        "summary": "确认当前知识范围并解锁正式出题",
+        "parameters": [
+          { "$ref": "#/components/parameters/CourseId" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "responses": {
+          "200": {
+            "description": "知识地图已确认",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["mapVersion", "confirmedAt"],
+                  "properties": {
+                    "mapVersion": { "type": "integer", "minimum": 1 },
+                    "confirmedAt": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}/explanations": {
+      "post": {
+        "tags": ["Tutor"],
+        "operationId": "startExplanation",
+        "summary": "基于划词/框选上下文启动解释",
+        "parameters": [
+          { "$ref": "#/components/parameters/CourseId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ExplanationRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "解释 Run 已创建",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExplanationAccepted" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/conversations/{conversationId}": {
+      "get": {
+        "tags": ["Tutor"],
+        "operationId": "getConversation",
+        "summary": "读取学习解释会话",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConversationId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "会话",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Conversation" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/conversations/{conversationId}/messages": {
+      "post": {
+        "tags": ["Tutor"],
+        "operationId": "sendConversationMessage",
+        "summary": "追问或切换解释方式",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConversationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ConversationMessageCreate" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "$ref": "#/components/responses/AsyncAccepted" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}/assessments": {
+      "post": {
+        "tags": ["Assessments"],
+        "operationId": "createAssessment",
+        "summary": "生成并独立验证一个题集",
+        "parameters": [
+          { "$ref": "#/components/parameters/CourseId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AssessmentCreate" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "$ref": "#/components/responses/AsyncAccepted" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/assessments/{assessmentId}": {
+      "get": {
+        "tags": ["Assessments"],
+        "operationId": "getAssessment",
+        "summary": "读取已发布题面，不含答案与内部评分规则",
+        "parameters": [
+          { "$ref": "#/components/parameters/AssessmentId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "题集",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Assessment" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/assessments/{assessmentId}/attempts": {
+      "post": {
+        "tags": ["Assessments"],
+        "operationId": "startAttempt",
+        "summary": "开始一次作答",
+        "parameters": [
+          { "$ref": "#/components/parameters/AssessmentId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "responses": {
+          "201": {
+            "description": "作答已开始",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Attempt" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/attempts/{attemptId}/responses": {
+      "put": {
+        "tags": ["Assessments"],
+        "operationId": "saveAttemptResponses",
+        "summary": "批量自动保存未提交答案",
+        "parameters": [
+          { "$ref": "#/components/parameters/AttemptId" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ResponsesUpsert" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "草稿已保存",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Attempt" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/attempts/{attemptId}/submit": {
+      "post": {
+        "tags": ["Assessments"],
+        "operationId": "submitAttempt",
+        "summary": "冻结作答并启动评价",
+        "parameters": [
+          { "$ref": "#/components/parameters/AttemptId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "responses": {
+          "202": { "$ref": "#/components/responses/AsyncAccepted" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/attempts/{attemptId}/evaluation": {
+      "get": {
+        "tags": ["Assessments"],
+        "operationId": "getAttemptEvaluation",
+        "summary": "读取得分、评分点、错因与下一步",
+        "parameters": [
+          { "$ref": "#/components/parameters/AttemptId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "评价",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Evaluation" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/concepts/{conceptId}/remediations": {
+      "post": {
+        "tags": ["Adaptive Learning"],
+        "operationId": "createRemediation",
+        "summary": "根据错误证据生成包含为什么与视觉材料的补救单元",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConceptId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RemediationRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "$ref": "#/components/responses/AsyncAccepted" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/concepts/{conceptId}/retests": {
+      "post": {
+        "tags": ["Adaptive Learning"],
+        "operationId": "createRetest",
+        "summary": "生成近迁移或远迁移复测",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConceptId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RetestRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "$ref": "#/components/responses/AsyncAccepted" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}/mastery": {
+      "get": {
+        "tags": ["Adaptive Learning"],
+        "operationId": "getMastery",
+        "summary": "读取概念掌握度与证据摘要",
+        "parameters": [
+          { "$ref": "#/components/parameters/CourseId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "掌握度列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/MasterySnapshot" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/courses/{courseId}/review-queue": {
+      "get": {
+        "tags": ["Adaptive Learning"],
+        "operationId": "getReviewQueue",
+        "summary": "读取到期复习队列",
+        "parameters": [
+          { "$ref": "#/components/parameters/CourseId" },
+          {
+            "name": "dueBefore",
+            "in": "query",
+            "schema": { "type": "string", "format": "date-time" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "复习队列",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/ReviewItem" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/reviews/{reviewId}/complete": {
+      "post": {
+        "tags": ["Adaptive Learning"],
+        "operationId": "completeReview",
+        "summary": "完成复习并关联新的学习证据",
+        "parameters": [
+          { "$ref": "#/components/parameters/ReviewId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ReviewComplete" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "复习状态已更新",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReviewItem" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/runs/{runId}": {
+      "get": {
+        "tags": ["Runs"],
+        "operationId": "getRun",
+        "summary": "读取异步 Run 状态",
+        "parameters": [
+          { "$ref": "#/components/parameters/RunId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Run" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/runs/{runId}/cancel": {
+      "post": {
+        "tags": ["Runs"],
+        "operationId": "cancelRun",
+        "summary": "取消可取消的活动 Run",
+        "parameters": [
+          { "$ref": "#/components/parameters/RunId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "responses": {
+          "202": {
+            "description": "取消请求已接受",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Run" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/runs/{runId}/events": {
+      "get": {
+        "tags": ["Runs"],
+        "operationId": "streamRunEvents",
+        "summary": "订阅 Run 的 SSE 事件；桌面端映射为 Typed IPC",
+        "parameters": [
+          { "$ref": "#/components/parameters/RunId" },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream of RunEvent envelopes",
+            "content": {
+              "text/event-stream": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/approvals/{approvalId}/decision": {
+      "post": {
+        "tags": ["Runs"],
+        "operationId": "decideApproval",
+        "summary": "回复一次仍然有效的运行时审批",
+        "parameters": [
+          { "$ref": "#/components/parameters/ApprovalId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ApprovalDecision" }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "决定已提交" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/artifacts/{artifactId}": {
+      "get": {
+        "tags": ["Runs"],
+        "operationId": "getArtifact",
+        "summary": "读取 Agent 或媒体产物元数据",
+        "parameters": [
+          { "$ref": "#/components/parameters/ArtifactId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "产物",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Artifact" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "同一个逻辑操作重试时复用同一 UUID。",
+        "schema": { "type": "string", "minLength": 8, "maxLength": 128 }
+      },
+      "IfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "CourseId": {
+        "name": "courseId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "DocumentId": {
+        "name": "documentId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "PageNumber": {
+        "name": "pageNumber",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer", "minimum": 1 }
+      },
+      "ConceptId": {
+        "name": "conceptId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "ConversationId": {
+        "name": "conversationId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "AssessmentId": {
+        "name": "assessmentId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "AttemptId": {
+        "name": "attemptId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "ReviewId": {
+        "name": "reviewId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "RunId": {
+        "name": "runId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "ApprovalId": {
+        "name": "approvalId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "ArtifactId": {
+        "name": "artifactId",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Id" }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "string" }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+      }
+    },
+    "responses": {
+      "AsyncAccepted": {
+        "description": "后台任务已接受",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/AsyncAccepted" }
+          }
+        }
+      },
+      "Error": {
+        "description": "错误",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Id": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message", "retryable", "traceId"],
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "retryable": { "type": "boolean" },
+              "traceId": { "type": "string" },
+              "details": { "type": "object" }
+            }
+          }
+        }
+      },
+      "SystemCapabilities": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["codex", "documentFormats", "ocr", "platform"],
+        "properties": {
+          "codex": {
+            "type": "object",
+            "required": ["installed", "version", "protocolCompatible"],
+            "properties": {
+              "installed": { "type": "boolean" },
+              "version": { "type": ["string", "null"] },
+              "protocolCompatible": { "type": "boolean" }
+            }
+          },
+          "documentFormats": {
+            "type": "array",
+            "items": { "enum": ["pdf", "pptx", "docx", "md", "txt", "png", "jpeg"] }
+          },
+          "ocr": { "type": "boolean" },
+          "platform": { "type": "string" }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["flow"],
+        "properties": {
+          "flow": { "enum": ["browser", "device_code"] }
+        }
+      },
+      "LoginSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["loginId", "flow"],
+        "properties": {
+          "loginId": { "$ref": "#/components/schemas/Id" },
+          "flow": { "enum": ["browser", "device_code"] },
+          "authUrl": { "type": ["string", "null"], "format": "uri" },
+          "verificationUrl": { "type": ["string", "null"], "format": "uri" },
+          "userCode": { "type": ["string", "null"] },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "AuthSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["authenticated", "authMode", "planType"],
+        "properties": {
+          "authenticated": { "type": "boolean" },
+          "authMode": { "type": ["string", "null"] },
+          "planType": { "type": ["string", "null"] },
+          "displayName": { "type": ["string", "null"] },
+          "email": { "type": ["string", "null"], "format": "email" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "RateWindow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["usedPercent", "windowDurationMins", "resetsAt"],
+        "properties": {
+          "usedPercent": { "type": "number", "minimum": 0 },
+          "windowDurationMins": { "type": ["integer", "null"], "minimum": 1 },
+          "resetsAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "RateLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["limitId", "primary", "secondary", "reachedType"],
+        "properties": {
+          "limitId": { "type": "string" },
+          "limitName": { "type": ["string", "null"] },
+          "planType": { "type": ["string", "null"] },
+          "primary": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/RateWindow" },
+              { "type": "null" }
+            ]
+          },
+          "secondary": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/RateWindow" },
+              { "type": "null" }
+            ]
+          },
+          "reachedType": { "type": ["string", "null"] }
+        }
+      },
+      "CourseCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "defaultLanguage"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": { "type": "string", "maxLength": 2000 },
+          "defaultLanguage": { "type": "string", "default": "zh-CN" }
+        }
+      },
+      "CourseUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": { "type": "string", "maxLength": 2000 },
+          "defaultLanguage": { "type": "string" }
+        }
+      },
+      "Course": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "description", "defaultLanguage", "version", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "defaultLanguage": { "type": "string" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Document": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "courseId", "displayName", "mediaType", "sourceVersion", "status", "pageCount", "warnings", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "courseId": { "$ref": "#/components/schemas/Id" },
+          "displayName": { "type": "string" },
+          "mediaType": { "type": "string" },
+          "sourceVersion": { "type": "string" },
+          "status": { "enum": ["uploaded", "processing", "ready", "failed"] },
+          "pageCount": { "type": ["integer", "null"], "minimum": 1 },
+          "warnings": { "type": "array", "items": { "type": "string" } },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentProcessRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "forceOcr": { "type": "boolean", "default": false },
+          "language": { "type": "string", "default": "auto" },
+          "replaceExistingDerivedData": { "type": "boolean", "default": false }
+        }
+      },
+      "BoundingBox": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["x", "y", "width", "height"],
+        "properties": {
+          "x": { "type": "number", "minimum": 0, "maximum": 1 },
+          "y": { "type": "number", "minimum": 0, "maximum": 1 },
+          "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+          "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+        }
+      },
+      "DocumentPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["documentId", "sourceVersion", "pageNumber", "text", "previewArtifactId", "warnings"],
+        "properties": {
+          "documentId": { "$ref": "#/components/schemas/Id" },
+          "sourceVersion": { "type": "string" },
+          "pageNumber": { "type": "integer", "minimum": 1 },
+          "text": { "type": "string" },
+          "previewArtifactId": { "$ref": "#/components/schemas/Id" },
+          "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "SourceChunk": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "documentId", "sourceVersion", "pageNumber", "text", "ordinal"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "documentId": { "$ref": "#/components/schemas/Id" },
+          "sourceVersion": { "type": "string" },
+          "pageNumber": { "type": "integer", "minimum": 1 },
+          "ordinal": { "type": "integer", "minimum": 0 },
+          "text": { "type": "string" },
+          "boundingBox": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/BoundingBox" },
+              { "type": "null" }
+            ]
+          }
+        }
+      },
+      "ConceptStatus": {
+        "enum": ["candidate", "confirmed", "needs_review", "excluded"]
+      },
+      "EvidenceRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidenceId", "documentId", "sourceVersion"],
+        "properties": {
+          "evidenceId": { "$ref": "#/components/schemas/Id" },
+          "documentId": { "$ref": "#/components/schemas/Id" },
+          "sourceVersion": { "type": "string" },
+          "chunkId": { "type": ["string", "null"] },
+          "pageNumber": { "type": ["integer", "null"], "minimum": 1 },
+          "quote": { "type": ["string", "null"], "maxLength": 500 },
+          "boundingBox": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/BoundingBox" },
+              { "type": "null" }
+            ]
+          }
+        }
+      },
+      "ConceptExtractionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["documentIds", "language"],
+        "properties": {
+          "documentIds": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "$ref": "#/components/schemas/Id" }
+          },
+          "language": { "type": "string" },
+          "scopeNote": { "type": ["string", "null"] }
+        }
+      },
+      "Concept": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "courseId", "name", "definition", "aliases", "misconceptions", "prerequisiteIds", "evidence", "status", "version"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "courseId": { "$ref": "#/components/schemas/Id" },
+          "name": { "type": "string" },
+          "definition": { "type": "string" },
+          "mechanism": { "type": ["string", "null"] },
+          "aliases": { "type": "array", "items": { "type": "string" } },
+          "misconceptions": { "type": "array", "items": { "type": "string" } },
+          "prerequisiteIds": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } },
+          "evidence": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" } },
+          "status": { "$ref": "#/components/schemas/ConceptStatus" },
+          "version": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "ConceptUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "definition": { "type": "string", "minLength": 1 },
+          "mechanism": { "type": ["string", "null"] },
+          "aliases": { "type": "array", "items": { "type": "string" } },
+          "misconceptions": { "type": "array", "items": { "type": "string" } },
+          "prerequisiteIds": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } },
+          "status": { "$ref": "#/components/schemas/ConceptStatus" }
+        }
+      },
+      "SelectionContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["documentId", "sourceVersion", "pageNumber", "selectedText", "prefix", "suffix"],
+        "properties": {
+          "documentId": { "$ref": "#/components/schemas/Id" },
+          "sourceVersion": { "type": "string" },
+          "pageNumber": { "type": "integer", "minimum": 1 },
+          "selectedText": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "prefix": { "type": "string", "maxLength": 2000 },
+          "suffix": { "type": "string", "maxLength": 2000 },
+          "boundingBox": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/BoundingBox" },
+              { "type": "null" }
+            ]
+          }
+        }
+      },
+      "ExplanationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["selection", "mode", "language", "includeVisual"],
+        "properties": {
+          "selection": { "$ref": "#/components/schemas/SelectionContext" },
+          "mode": { "enum": ["simple", "mechanism", "compare", "visual", "socratic", "example"] },
+          "language": { "type": "string" },
+          "includeVisual": { "type": "boolean" }
+        }
+      },
+      "ConversationMessageCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1, "maxLength": 12000 },
+          "mode": { "enum": ["simple", "mechanism", "compare", "visual", "socratic", "example"] },
+          "includeVisual": { "type": "boolean" }
+        }
+      },
+      "ContentBlock": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "text"],
+            "properties": {
+              "type": { "const": "text" },
+              "text": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "artifactId", "altText"],
+            "properties": {
+              "type": { "const": "image" },
+              "artifactId": { "$ref": "#/components/schemas/Id" },
+              "altText": { "type": "string", "minLength": 1 },
+              "caption": { "type": ["string", "null"] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "columns", "rows"],
+            "properties": {
+              "type": { "const": "table" },
+              "columns": { "type": "array", "items": { "type": "string" } },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": { "type": ["string", "number", "boolean", "null"] }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ConversationMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role", "blocks", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "role": { "enum": ["user", "assistant"] },
+          "blocks": { "type": "array", "items": { "$ref": "#/components/schemas/ContentBlock" } },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "courseId", "messages", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "courseId": { "$ref": "#/components/schemas/Id" },
+          "conceptId": { "type": ["string", "null"] },
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/ConversationMessage" } },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AssessmentCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "blueprint"],
+        "properties": {
+          "kind": { "enum": ["diagnostic", "practice", "targeted_retest", "comprehensive"] },
+          "conceptIds": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } },
+          "blueprint": { "$ref": "#/components/schemas/AssessmentBlueprint" }
+        }
+      },
+      "AssessmentBlueprint": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["questionCount", "difficultyMix", "capabilityMix", "requireVisualRatio", "language"],
+        "properties": {
+          "questionCount": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "difficultyMix": { "$ref": "#/components/schemas/DifficultyMix" },
+          "capabilityMix": { "$ref": "#/components/schemas/CapabilityMix" },
+          "requireVisualRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+          "language": { "type": "string" }
+        }
+      },
+      "DifficultyMix": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["L1", "L2", "L3", "L4"],
+        "properties": {
+          "L1": { "type": "number", "minimum": 0, "maximum": 1 },
+          "L2": { "type": "number", "minimum": 0, "maximum": 1 },
+          "L3": { "type": "number", "minimum": 0, "maximum": 1 },
+          "L4": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "CapabilityMix": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["recall", "discrimination", "calculation", "application", "synthesis_ethics"],
+        "properties": {
+          "recall": { "type": "number", "minimum": 0, "maximum": 1 },
+          "discrimination": { "type": "number", "minimum": 0, "maximum": 1 },
+          "calculation": { "type": "number", "minimum": 0, "maximum": 1 },
+          "application": { "type": "number", "minimum": 0, "maximum": 1 },
+          "synthesis_ethics": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "MediaRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifactId", "kind", "mimeType", "altText", "fileValidated", "renderValidated", "answerLeakChecked"],
+        "properties": {
+          "artifactId": { "$ref": "#/components/schemas/Id" },
+          "kind": { "enum": ["source_crop", "generated_diagram", "generated_chart"] },
+          "mimeType": { "type": "string" },
+          "altText": { "type": "string", "minLength": 1 },
+          "caption": { "type": ["string", "null"] },
+          "width": { "type": "integer", "minimum": 1 },
+          "height": { "type": "integer", "minimum": 1 },
+          "fileValidated": { "const": true },
+          "renderValidated": { "const": true },
+          "answerLeakChecked": { "const": true }
+        }
+      },
+      "AssessmentQuestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "number", "conceptIds", "difficulty", "capability", "stem", "responseType", "points", "media"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "number": { "type": "integer", "minimum": 1 },
+          "conceptIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/Id" } },
+          "difficulty": { "enum": ["L1", "L2", "L3", "L4"] },
+          "capability": { "enum": ["recall", "discrimination", "calculation", "application", "synthesis_ethics"] },
+          "stem": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/ContentBlock" } },
+          "responseType": { "enum": ["single_choice", "multiple_choice", "true_false", "short_text", "long_text", "numeric"] },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "points": { "type": "number", "exclusiveMinimum": 0 },
+          "media": { "type": "array", "items": { "$ref": "#/components/schemas/MediaRef" } }
+        }
+      },
+      "Assessment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "courseId", "kind", "status", "questions", "totalPoints", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "courseId": { "$ref": "#/components/schemas/Id" },
+          "kind": { "enum": ["diagnostic", "practice", "targeted_retest", "comprehensive"] },
+          "status": { "enum": ["generating", "verifying", "ready", "rejected", "archived"] },
+          "questions": { "type": "array", "items": { "$ref": "#/components/schemas/AssessmentQuestion" } },
+          "totalPoints": { "type": "number", "minimum": 0 },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AnswerValue": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "number" },
+          { "type": "boolean" },
+          { "type": "array", "items": { "type": "string" } },
+          { "type": "null" }
+        ]
+      },
+      "ResponseDraft": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["questionId", "answer"],
+        "properties": {
+          "questionId": { "$ref": "#/components/schemas/Id" },
+          "answer": { "$ref": "#/components/schemas/AnswerValue" }
+        }
+      },
+      "Attempt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "assessmentId", "status", "responses", "version", "startedAt", "submittedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "assessmentId": { "$ref": "#/components/schemas/Id" },
+          "status": { "enum": ["in_progress", "submitted", "evaluating", "evaluated"] },
+          "responses": { "type": "array", "items": { "$ref": "#/components/schemas/ResponseDraft" } },
+          "version": { "type": "integer", "minimum": 1 },
+          "startedAt": { "type": "string", "format": "date-time" },
+          "submittedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ResponsesUpsert": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["responses"],
+        "properties": {
+          "responses": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ResponseDraft" }
+          }
+        }
+      },
+      "CriterionEvaluation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterionId", "description", "awardedPoints", "maxPoints", "reason"],
+        "properties": {
+          "criterionId": { "$ref": "#/components/schemas/Id" },
+          "description": { "type": "string" },
+          "awardedPoints": { "type": "number", "minimum": 0 },
+          "maxPoints": { "type": "number", "exclusiveMinimum": 0 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      },
+      "ErrorEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "conceptId", "tag", "observation", "why"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "conceptId": { "$ref": "#/components/schemas/Id" },
+          "tag": {
+            "enum": ["definition_confusion", "boundary_condition_missed", "mechanism_missing", "representation_mismatch", "calculation_error", "chart_selection_error", "visual_reasoning_error", "causality_error", "metric_denominator_error", "ethical_risk_missed", "careless_slip"]
+          },
+          "observation": { "type": "string" },
+          "why": { "type": "string" }
+        }
+      },
+      "Evaluation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "attemptId", "totalScore", "maxScore", "criteria", "errors", "nextActions", "confidence", "requiresHumanReview", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "attemptId": { "$ref": "#/components/schemas/Id" },
+          "totalScore": { "type": "number", "minimum": 0 },
+          "maxScore": { "type": "number", "exclusiveMinimum": 0 },
+          "criteria": { "type": "array", "items": { "$ref": "#/components/schemas/CriterionEvaluation" } },
+          "errors": { "type": "array", "items": { "$ref": "#/components/schemas/ErrorEvent" } },
+          "nextActions": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "requiresHumanReview": { "type": "boolean" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "RemediationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidenceIds", "includeVisual", "explanationDepth", "retest"],
+        "properties": {
+          "evidenceIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/Id" } },
+          "includeVisual": { "type": "boolean" },
+          "explanationDepth": { "enum": ["concise", "mechanism", "deep"] },
+          "retest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["nearTransferCount", "farTransferCount"],
+            "properties": {
+              "nearTransferCount": { "type": "integer", "minimum": 0, "maximum": 10 },
+              "farTransferCount": { "type": "integer", "minimum": 0, "maximum": 10 }
+            }
+          }
+        }
+      },
+      "RetestRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["transfer", "questionCount", "includeVisual"],
+        "properties": {
+          "transfer": { "enum": ["near", "far", "mixed"] },
+          "questionCount": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "includeVisual": { "type": "boolean" },
+          "excludeQuestionIds": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } }
+        }
+      },
+      "MasterySnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["conceptId", "level", "attempts", "latestEvidenceIds", "lastSeenAt", "nextReviewAt"],
+        "properties": {
+          "conceptId": { "$ref": "#/components/schemas/Id" },
+          "level": { "type": "integer", "minimum": 0, "maximum": 5 },
+          "attempts": { "type": "integer", "minimum": 0 },
+          "latestEvidenceIds": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } },
+          "lastSeenAt": { "type": ["string", "null"], "format": "date-time" },
+          "nextReviewAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ReviewItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "courseId", "conceptId", "status", "dueAt", "recommendedActivity"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "courseId": { "$ref": "#/components/schemas/Id" },
+          "conceptId": { "$ref": "#/components/schemas/Id" },
+          "status": { "enum": ["scheduled", "due", "completed", "skipped"] },
+          "dueAt": { "type": "string", "format": "date-time" },
+          "recommendedActivity": { "enum": ["recall", "explain", "near_transfer", "far_transfer"] }
+        }
+      },
+      "ReviewComplete": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["result"],
+        "properties": {
+          "result": { "enum": ["completed", "skipped"] },
+          "evidenceId": { "type": ["string", "null"] }
+        }
+      },
+      "RunStatus": {
+        "enum": ["queued", "running", "waiting_approval", "succeeded", "failed", "cancelled", "interrupted"]
+      },
+      "AsyncAccepted": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["runId", "status", "resourceId"],
+        "properties": {
+          "runId": { "$ref": "#/components/schemas/Id" },
+          "status": { "$ref": "#/components/schemas/RunStatus" },
+          "resourceId": { "type": ["string", "null"] }
+        }
+      },
+      "ExplanationAccepted": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["runId", "status", "resourceId", "conversationId"],
+        "properties": {
+          "runId": { "$ref": "#/components/schemas/Id" },
+          "status": { "$ref": "#/components/schemas/RunStatus" },
+          "resourceId": { "type": ["string", "null"] },
+          "conversationId": { "$ref": "#/components/schemas/Id" }
+        }
+      },
+      "Run": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "status", "progress", "createdAt", "startedAt", "completedAt", "artifactIds", "error"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "kind": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/RunStatus" },
+          "progress": { "type": "number", "minimum": 0, "maximum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "startedAt": { "type": ["string", "null"], "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" },
+          "artifactIds": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } },
+          "error": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/ErrorEnvelope" },
+              { "type": "null" }
+            ]
+          }
+        }
+      },
+      "RunEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["eventId", "runId", "sequence", "type", "occurredAt", "payload"],
+        "properties": {
+          "eventId": { "$ref": "#/components/schemas/Id" },
+          "runId": { "$ref": "#/components/schemas/Id" },
+          "sequence": { "type": "integer", "minimum": 0 },
+          "type": {
+            "enum": ["run.status.changed", "agent.message.delta", "artifact.created", "document.processing.progress", "assessment.ready", "evaluation.ready", "approval.required", "approval.resolved", "auth.session.updated", "rate_limit.updated", "run.warning", "run.failed"]
+          },
+          "occurredAt": { "type": "string", "format": "date-time" },
+          "payload": { "type": "object" }
+        }
+      },
+      "ApprovalDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision"],
+        "properties": {
+          "decision": { "enum": ["accept_once", "accept_session", "decline", "cancel"] }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "runId", "kind", "mediaType", "createdAt", "downloadUrl", "metadata"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Id" },
+          "runId": { "$ref": "#/components/schemas/Id" },
+          "kind": { "type": "string" },
+          "mediaType": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "downloadUrl": { "type": ["string", "null"], "format": "uri-reference" },
+          "metadata": { "type": "object" }
+        }
+      }
+    }
+  }
+}

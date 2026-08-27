@@ -1,0 +1,6 @@
+{
+  "name": "@ai2sapien/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI2Sapien Electron + React desktop shell (Spike 0 placeholder)."
+}

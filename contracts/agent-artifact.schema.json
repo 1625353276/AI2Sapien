@@ -1,0 +1,740 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.study-app.dev/schemas/agent-artifact/0.1.0",
+  "title": "AgentArtifact",
+  "description": "自适应学习系统中 Agent 之间唯一允许交换的结构化产物。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "artifactId",
+    "runId",
+    "taskId",
+    "role",
+    "artifactType",
+    "status",
+    "courseId",
+    "payload",
+    "evidence",
+    "media",
+    "confidence",
+    "validation",
+    "warnings",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1.0"
+    },
+    "artifactId": {
+      "$ref": "#/$defs/Id"
+    },
+    "runId": {
+      "$ref": "#/$defs/Id"
+    },
+    "taskId": {
+      "$ref": "#/$defs/Id"
+    },
+    "role": {
+      "enum": [
+        "material_analyst",
+        "knowledge_mapper",
+        "question_designer",
+        "question_verifier",
+        "answer_evaluator",
+        "misconception_analyst",
+        "remediation_tutor",
+        "visual_designer",
+        "retest_planner",
+        "mastery_tracker",
+        "orchestrator"
+      ]
+    },
+    "artifactType": {
+      "enum": [
+        "concept_set",
+        "concept_map",
+        "question_set",
+        "validation_report",
+        "evaluation",
+        "misconception_report",
+        "remediation_unit",
+        "visual_asset_plan",
+        "retest_plan",
+        "mastery_recommendation",
+        "conversation_message",
+        "orchestration_plan"
+      ]
+    },
+    "status": {
+      "enum": ["succeeded", "partial", "failed"]
+    },
+    "courseId": {
+      "$ref": "#/$defs/Id"
+    },
+    "inputArtifactIds": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Id"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "payload": {
+      "oneOf": [
+        { "$ref": "#/$defs/ConceptPayload" },
+        { "$ref": "#/$defs/QuestionPayload" },
+        { "$ref": "#/$defs/ValidationPayload" },
+        { "$ref": "#/$defs/EvaluationPayload" },
+        { "$ref": "#/$defs/MisconceptionPayload" },
+        { "$ref": "#/$defs/RemediationPayload" },
+        { "$ref": "#/$defs/VisualPlanPayload" },
+        { "$ref": "#/$defs/RetestPayload" },
+        { "$ref": "#/$defs/MasteryPayload" },
+        { "$ref": "#/$defs/MessagePayload" },
+        { "$ref": "#/$defs/OrchestrationPayload" }
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EvidenceRef"
+      }
+    },
+    "media": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MediaRef"
+      }
+    },
+    "confidence": {
+      "$ref": "#/$defs/Confidence"
+    },
+    "validation": {
+      "$ref": "#/$defs/ArtifactValidation"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "failure": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/Failure" }
+      ],
+      "default": null
+    },
+    "provenance": {
+      "$ref": "#/$defs/RuntimeProvenance"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "failed" } },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["failure"],
+        "properties": {
+          "failure": { "$ref": "#/$defs/Failure" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "concept_set" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "allOf": [
+              { "$ref": "#/$defs/ConceptPayload" },
+              { "properties": { "kind": { "const": "concept_set" } } }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "concept_map" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "allOf": [
+              { "$ref": "#/$defs/ConceptPayload" },
+              { "properties": { "kind": { "const": "concept_map" } } }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "question_set" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/QuestionPayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "evaluation" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/EvaluationPayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "validation_report" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/ValidationPayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "misconception_report" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/MisconceptionPayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "remediation_unit" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/RemediationPayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "visual_asset_plan" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/VisualPlanPayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "retest_plan" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/RetestPayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "mastery_recommendation" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/MasteryPayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "conversation_message" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/MessagePayload" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "artifactType": { "const": "orchestration_plan" } },
+        "required": ["artifactType"]
+      },
+      "then": {
+        "properties": {
+          "payload": { "$ref": "#/$defs/OrchestrationPayload" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "ContentBlock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "text"],
+          "properties": {
+            "type": { "const": "text" },
+            "text": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "mediaId", "altText"],
+          "properties": {
+            "type": { "const": "image" },
+            "mediaId": { "$ref": "#/$defs/Id" },
+            "altText": { "type": "string", "minLength": 1 },
+            "caption": { "type": ["string", "null"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "columns", "rows"],
+          "properties": {
+            "type": { "const": "table" },
+            "columns": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": { "type": ["string", "number", "boolean", "null"] }
+              }
+            },
+            "caption": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "documentId", "sourceVersion"],
+      "properties": {
+        "evidenceId": { "$ref": "#/$defs/Id" },
+        "documentId": { "$ref": "#/$defs/Id" },
+        "sourceVersion": { "type": "string", "minLength": 8 },
+        "chunkId": {
+          "oneOf": [
+            { "$ref": "#/$defs/Id" },
+            { "type": "null" }
+          ]
+        },
+        "pageNumber": { "type": ["integer", "null"], "minimum": 1 },
+        "slideNumber": { "type": ["integer", "null"], "minimum": 1 },
+        "quote": { "type": ["string", "null"], "maxLength": 500 },
+        "boundingBox": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/BoundingBox" }
+          ]
+        },
+        "supports": { "type": "string", "minLength": 1 }
+      }
+    },
+    "BoundingBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      }
+    },
+    "MediaRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mediaId",
+        "kind",
+        "mimeType",
+        "altText",
+        "answerLeakChecked",
+        "fileValidated",
+        "renderValidated"
+      ],
+      "properties": {
+        "mediaId": { "$ref": "#/$defs/Id" },
+        "kind": { "enum": ["source_crop", "generated_diagram", "generated_chart"] },
+        "mimeType": { "enum": ["image/png", "image/jpeg", "image/webp", "image/svg+xml"] },
+        "altText": { "type": "string", "minLength": 1 },
+        "caption": { "type": ["string", "null"] },
+        "width": { "type": ["integer", "null"], "minimum": 1 },
+        "height": { "type": ["integer", "null"], "minimum": 1 },
+        "sha256": { "type": ["string", "null"], "pattern": "^[a-fA-F0-9]{64}$" },
+        "sourceEvidenceId": {
+          "oneOf": [
+            { "$ref": "#/$defs/Id" },
+            { "type": "null" }
+          ]
+        },
+        "generationConfigArtifactId": {
+          "oneOf": [
+            { "$ref": "#/$defs/Id" },
+            { "type": "null" }
+          ]
+        },
+        "answerLeakChecked": { "type": "boolean" },
+        "fileValidated": { "type": "boolean" },
+        "renderValidated": { "type": "boolean" }
+      }
+    },
+    "Confidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overall", "rationale"],
+      "properties": {
+        "overall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rationale": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ArtifactValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaValid", "evidenceComplete", "mediaComplete", "independentReview"],
+      "properties": {
+        "schemaValid": { "type": "boolean" },
+        "evidenceComplete": { "type": "boolean" },
+        "mediaComplete": { "type": "boolean" },
+        "independentReview": { "enum": ["not_required", "pending", "passed", "failed"] },
+        "reviewArtifactId": {
+          "oneOf": [
+            { "$ref": "#/$defs/Id" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "Failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object" }
+      }
+    },
+    "RuntimeProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": { "const": "codex_app_server" },
+        "runtimeVersion": { "type": "string" },
+        "model": { "type": "string" },
+        "threadId": { "type": "string" },
+        "turnId": { "type": "string" }
+      }
+    },
+    "ConceptCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conceptId", "name", "definition", "prerequisiteConceptIds", "evidenceIds"],
+      "properties": {
+        "conceptId": { "$ref": "#/$defs/Id" },
+        "name": { "type": "string", "minLength": 1 },
+        "aliases": { "type": "array", "items": { "type": "string" } },
+        "definition": { "type": "string", "minLength": 1 },
+        "mechanism": { "type": ["string", "null"] },
+        "commonMisconceptions": { "type": "array", "items": { "type": "string" } },
+        "prerequisiteConceptIds": { "type": "array", "items": { "$ref": "#/$defs/Id" } },
+        "evidenceIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Id" } }
+      }
+    },
+    "ConceptPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "concepts"],
+      "properties": {
+        "kind": { "enum": ["concept_set", "concept_map"] },
+        "concepts": { "type": "array", "items": { "$ref": "#/$defs/ConceptCandidate" } },
+        "conflicts": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "QuestionDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionId",
+        "conceptIds",
+        "difficulty",
+        "capability",
+        "stem",
+        "responseType",
+        "answerSpec",
+        "rubric",
+        "evidenceIds"
+      ],
+      "properties": {
+        "questionId": { "$ref": "#/$defs/Id" },
+        "conceptIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Id" } },
+        "difficulty": { "enum": ["L1", "L2", "L3", "L4"] },
+        "capability": {
+          "enum": ["recall", "discrimination", "calculation", "application", "synthesis_ethics"]
+        },
+        "stem": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ContentBlock" } },
+        "responseType": { "enum": ["single_choice", "multiple_choice", "true_false", "short_text", "long_text", "numeric"] },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "answerSpec": { "type": "object" },
+        "rubric": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/RubricCriterion" }
+        },
+        "evidenceIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Id" } }
+      }
+    },
+    "RubricCriterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criterionId", "description", "points"],
+      "properties": {
+        "criterionId": { "$ref": "#/$defs/Id" },
+        "description": { "type": "string", "minLength": 1 },
+        "points": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "QuestionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "questions"],
+      "properties": {
+        "kind": { "const": "question_set" },
+        "questions": { "type": "array", "items": { "$ref": "#/$defs/QuestionDraft" } }
+      }
+    },
+    "CheckResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check", "status", "message"],
+      "properties": {
+        "check": {
+          "enum": [
+            "source_support",
+            "single_best_answer",
+            "ambiguity",
+            "answer_leak",
+            "rubric_alignment",
+            "difficulty_alignment",
+            "media_available",
+            "media_readable",
+            "accessibility",
+            "fact_consistency"
+          ]
+        },
+        "status": { "enum": ["passed", "failed", "warning", "not_applicable"] },
+        "message": { "type": "string", "minLength": 1 },
+        "targetId": {
+          "oneOf": [
+            { "$ref": "#/$defs/Id" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "ValidationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "decision", "checks"],
+      "properties": {
+        "kind": { "const": "validation_report" },
+        "decision": { "enum": ["pass", "revise", "reject"] },
+        "checks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/CheckResult" } },
+        "revisionInstructions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "CriterionEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criterionId", "awardedPoints", "maxPoints", "reason"],
+      "properties": {
+        "criterionId": { "$ref": "#/$defs/Id" },
+        "awardedPoints": { "type": "number", "minimum": 0 },
+        "maxPoints": { "type": "number", "exclusiveMinimum": 0 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "EvaluationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "totalScore", "maxScore", "criteria", "errorEvents", "nextActions"],
+      "properties": {
+        "kind": { "const": "evaluation" },
+        "totalScore": { "type": "number", "minimum": 0 },
+        "maxScore": { "type": "number", "exclusiveMinimum": 0 },
+        "criteria": { "type": "array", "items": { "$ref": "#/$defs/CriterionEvaluation" } },
+        "errorEvents": { "type": "array", "items": { "$ref": "#/$defs/ErrorEvent" } },
+        "nextActions": { "type": "array", "items": { "type": "string" } },
+        "requiresHumanReview": { "type": "boolean", "default": false }
+      }
+    },
+    "ErrorEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["errorId", "conceptId", "tag", "observation", "why"],
+      "properties": {
+        "errorId": { "$ref": "#/$defs/Id" },
+        "conceptId": { "$ref": "#/$defs/Id" },
+        "tag": {
+          "enum": [
+            "definition_confusion",
+            "boundary_condition_missed",
+            "mechanism_missing",
+            "representation_mismatch",
+            "calculation_error",
+            "chart_selection_error",
+            "visual_reasoning_error",
+            "causality_error",
+            "metric_denominator_error",
+            "ethical_risk_missed",
+            "careless_slip"
+          ]
+        },
+        "observation": { "type": "string", "minLength": 1 },
+        "why": { "type": "string", "minLength": 1 }
+      }
+    },
+    "MisconceptionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "errorEvents", "rootCauseHypotheses"],
+      "properties": {
+        "kind": { "const": "misconception_report" },
+        "errorEvents": { "type": "array", "items": { "$ref": "#/$defs/ErrorEvent" } },
+        "rootCauseHypotheses": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "RemediationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "diagnosis", "whyItHappened", "correctMechanism", "contrast", "blocks", "memoryCue"],
+      "properties": {
+        "kind": { "const": "remediation_unit" },
+        "diagnosis": { "type": "string", "minLength": 1 },
+        "whyItHappened": { "type": "string", "minLength": 1 },
+        "correctMechanism": { "type": "string", "minLength": 1 },
+        "contrast": { "type": "string", "minLength": 1 },
+        "blocks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ContentBlock" } },
+        "memoryCue": { "type": "string", "minLength": 1 },
+        "selfCheckPrompt": { "type": ["string", "null"] }
+      }
+    },
+    "VisualPlanPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "learningObjective", "mediaIds"],
+      "properties": {
+        "kind": { "const": "visual_asset_plan" },
+        "learningObjective": { "type": "string", "minLength": 1 },
+        "mediaIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Id" } },
+        "factCheckNotes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "RetestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "targetConceptIds", "nearTransferCount", "farTransferCount", "questionIds"],
+      "properties": {
+        "kind": { "const": "retest_plan" },
+        "targetConceptIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Id" } },
+        "nearTransferCount": { "type": "integer", "minimum": 0 },
+        "farTransferCount": { "type": "integer", "minimum": 0 },
+        "questionIds": { "type": "array", "items": { "$ref": "#/$defs/Id" } }
+      }
+    },
+    "MasteryPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "recommendations"],
+      "properties": {
+        "kind": { "const": "mastery_recommendation" },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["conceptId", "suggestedLevel", "evidenceIds", "reason"],
+            "properties": {
+              "conceptId": { "$ref": "#/$defs/Id" },
+              "suggestedLevel": { "type": "integer", "minimum": 0, "maximum": 5 },
+              "evidenceIds": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Id" } },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "MessagePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "blocks", "suggestedFollowUps"],
+      "properties": {
+        "kind": { "const": "conversation_message" },
+        "blocks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ContentBlock" } },
+        "suggestedFollowUps": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "OrchestrationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "tasks"],
+      "properties": {
+        "kind": { "const": "orchestration_plan" },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["taskId", "role", "dependsOn", "objective"],
+            "properties": {
+              "taskId": { "$ref": "#/$defs/Id" },
+              "role": { "type": "string", "minLength": 1 },
+              "dependsOn": { "type": "array", "items": { "$ref": "#/$defs/Id" } },
+              "objective": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

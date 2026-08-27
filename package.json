@@ -1,0 +1,29 @@
+{
+  "name": "ai2sapien",
+  "version": "0.1.0",
+  "private": true,
+  "description": "From AI output to human mastery.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "validate:contracts": "node scripts/validate-contracts.mjs",
+    "check": "npm run validate:contracts && npm run typecheck && npm test",
+    "smoke:codex": "npm run build -w @ai2sapien/agent-runtime && node scripts/codex-smoke.mjs",
+    "generate:codex-schema": "codex app-server generate-ts --out packages/agent-runtime/generated/ts && codex app-server generate-json-schema --out packages/agent-runtime/generated/json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
