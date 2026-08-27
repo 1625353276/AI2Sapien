@@ -13,10 +13,10 @@ AI2Sapien 是一个本地优先的自适应学习桌面应用。学习者上传�
 - [x] OpenAPI 3.1 业务接口契约
 - [x] 多 Agent Artifact JSON Schema
 - [x] Codex App Server JSON-RPC 基础适配层
-- [ ] ChatGPT 浏览器登录 UI
-- [ ] Rate limit UI
+- [x] ChatGPT 浏览器登录与账户状态 UI
+- [x] Rate limit UI
 - [ ] Thread/Turn 流式演示
-- [ ] Electron 阅读器壳
+- [x] Electron 安全桌面壳
 - [ ] 材料上传与划词解释
 
 ## 为什么使用 Codex App Server

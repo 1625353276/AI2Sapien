@@ -2,5 +2,30 @@
   "name": "@ai2sapien/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "AI2Sapien Electron + React desktop shell (Spike 0 placeholder)."
+  "description": "AI2Sapien local-first Electron learning workspace.",
+  "type": "module",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "npm run build:main && npm run build:renderer",
+    "build:main": "node ../../node_modules/typescript/bin/tsc -p tsconfig.main.json",
+    "build:renderer": "node ../../node_modules/vite/bin/vite.js build",
+    "dev": "node ../../node_modules/concurrently/dist/bin/concurrently.js -k \"node ../../node_modules/vite/bin/vite.js --host 127.0.0.1\" \"node ../../node_modules/wait-on/bin/wait-on tcp:5173 && node ../../node_modules/electron/cli.js . --dev-server-url=http://127.0.0.1:5173\"",
+    "start": "node ../../node_modules/electron/cli.js .",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.main.json --noEmit && node ../../node_modules/typescript/bin/tsc -p tsconfig.renderer.json --noEmit"
+  },
+  "dependencies": {
+    "@ai2sapien/agent-runtime": "*",
+    "@ai2sapien/contracts": "*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.0.0",
+    "electron": "^39.8.10",
+    "vite": "^7.0.0",
+    "wait-on": "^8.0.0"
+  }
 }

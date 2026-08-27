@@ -40,6 +40,26 @@ export interface RateLimits {
   reachedType: string | null;
 }
 
+export interface RuntimeIssue {
+  code: "CODEX_NOT_INSTALLED" | "CODEX_UNAVAILABLE" | "AUTH_REQUIRED" | "RATE_LIMIT_UNAVAILABLE";
+  message: string;
+  retryable: boolean;
+}
+
+export interface RuntimeStatusSnapshot {
+  connected: boolean;
+  auth: AuthSession;
+  rateLimits: RateLimits[];
+  checkedAt: IsoDateTime;
+  issue: RuntimeIssue | null;
+}
+
+export interface ChatGptLoginLaunch {
+  loginId: string;
+  flow: "browser";
+  authUrl: string;
+}
+
 export type RunEventType =
   | "run.status.changed"
   | "agent.message.delta"
