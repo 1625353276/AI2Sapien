@@ -5,7 +5,7 @@ const sharedOptions = {
   platform: "node",
   target: "node22",
   sourcemap: true,
-  external: ["electron"],
+  external: ["electron", "pdfjs-dist", "pdfjs-dist/*"],
   logLevel: "info",
 };
 

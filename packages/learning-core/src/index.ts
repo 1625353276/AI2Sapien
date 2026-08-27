@@ -62,6 +62,8 @@ export interface MasteryEvidence {
 /**
  * Deterministic baseline. AI may label evidence, but it may not directly set mastery.
  */
+export * from "./practice-rules.js";
+
 export function deriveMasteryLevel(evidence: readonly MasteryEvidence[]): MasteryLevel {
   const valid = evidence.filter((item) => item.correct && item.reasoningCorrect);
 

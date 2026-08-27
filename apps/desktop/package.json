@@ -8,7 +8,7 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build": "npm run build:main && npm run build:renderer",
-    "build:dependencies": "npm run build -w @ai2sapien/contracts && npm run build -w @ai2sapien/agent-runtime",
+    "build:dependencies": "npm run build -w @ai2sapien/contracts && npm run build -w @ai2sapien/agent-runtime && npm run build -w @ai2sapien/learning-core && npm run build -w @ai2sapien/model-providers",
     "build:main": "npm run build:dependencies && node scripts/build-main.mjs",
     "build:renderer": "node ../../node_modules/vite/bin/vite.js build",
     "dev": "node ../../node_modules/concurrently/dist/bin/concurrently.js -k \"node ../../node_modules/vite/bin/vite.js --host 127.0.0.1\" \"node ../../node_modules/wait-on/bin/wait-on tcp:5173 && node ../../node_modules/electron/cli.js . --dev-server-url=http://127.0.0.1:5173\"",
@@ -20,6 +20,8 @@
   "devDependencies": {
     "@ai2sapien/agent-runtime": "*",
     "@ai2sapien/contracts": "*",
+    "@ai2sapien/learning-core": "*",
+    "@ai2sapien/model-providers": "*",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
@@ -31,5 +33,8 @@
     "react-dom": "^19.0.0",
     "vite": "^7.0.0",
     "wait-on": "^8.0.0"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^6.2.108"
   }
 }

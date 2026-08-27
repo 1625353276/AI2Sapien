@@ -75,6 +75,7 @@ export interface TurnStartResult {
 export interface TurnInputText {
   type: "text";
   text: string;
+  text_elements?: [];
 }
 
 export interface TurnStartParams {
@@ -240,6 +241,9 @@ export class CodexAppServerClient {
     sandbox?: string;
     personality?: string;
     serviceName?: string;
+    baseInstructions?: string;
+    developerInstructions?: string;
+    ephemeral?: boolean;
   } = {}): Promise<ThreadStartResult> {
     return this.#request("thread/start", params);
   }
@@ -249,7 +253,10 @@ export class CodexAppServerClient {
   }
 
   startTurn(params: TurnStartParams): Promise<TurnStartResult> {
-    return this.#request("turn/start", params);
+    return this.#request("turn/start", {
+      ...params,
+      input: params.input.map((item) => ({ ...item, text_elements: item.text_elements ?? [] })),
+    });
   }
 
   async interruptTurn(threadId: string, turnId: string): Promise<void> {

@@ -5,6 +5,8 @@ coverage/
 Thumbs.db
 *.log
 *.tsbuildinfo
+.ai2sapien-library-smoke-*/
+.ai2sapien-practice-smoke-*/
 .env
 .env.*
 !.env.example

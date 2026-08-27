@@ -23,6 +23,9 @@
     "validate:contracts": "node scripts/validate-contracts.mjs",
     "check": "npm run validate:contracts && npm run typecheck && npm test",
     "smoke:codex": "npm run build -w @ai2sapien/agent-runtime && node scripts/codex-smoke.mjs",
+    "smoke:library": "node scripts/library-smoke.mjs",
+    "smoke:practice": "node scripts/practice-smoke.mjs",
+    "smoke:tutor": "npm run build -w @ai2sapien/agent-runtime && node scripts/tutor-smoke.mjs",
     "generate:codex-schema": "codex app-server generate-ts --out packages/agent-runtime/generated/ts && codex app-server generate-json-schema --out packages/agent-runtime/generated/json"
   },
   "devDependencies": {

@@ -19,7 +19,9 @@ AI2Sapien 是一个本地优先的自适应学习桌面应用。学习者上传�
 - [x] Electron 安全桌面壳
 - [x] Windows x64 NSIS 安装包与 GitHub 构建流程
 - [x] Expo / React Native 手机伴随端框架
-- [ ] 材料上传与划词解释
+- [x] 材料上传与划词解释
+- [x] 练习闭环切片：出题 → 独立验题 → 作答+推理评审 → 错因补救 → 复测 → 掌握度
+- [x] 可插拔 AI 提供者：Codex（ChatGPT 登录）/ OpenAI 兼容接口（OpenAI、Ollama 等）/ Anthropic Claude，统一流式会话
 
 ## 为什么使用 Codex App Server
 
@@ -86,6 +88,12 @@ npm run smoke:codex
 
 ```powershell
 npm run generate:codex-schema
+```
+
+离线验证练习闭环（无需 Codex，使用模拟运行时）：
+
+```powershell
+npm run smoke:practice
 ```
 
 ## 设计文档

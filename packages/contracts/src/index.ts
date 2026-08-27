@@ -60,6 +60,76 @@ export interface ChatGptLoginLaunch {
   authUrl: string;
 }
 
+export interface CourseCreate {
+  title: string;
+  description: string;
+  defaultLanguage: string;
+}
+
+export interface Course {
+  id: Id;
+  title: string;
+  description: string;
+  defaultLanguage: string;
+  version: number;
+  documentCount: number;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export type DocumentStatus = "uploaded" | "processing" | "ready" | "failed";
+
+export interface CourseDocument {
+  id: Id;
+  courseId: Id;
+  displayName: string;
+  mediaType: string;
+  sourceVersion: string;
+  status: DocumentStatus;
+  pageCount: number | null;
+  sizeBytes: number;
+  warnings: string[];
+  createdAt: IsoDateTime;
+}
+
+export interface DocumentPage {
+  documentId: Id;
+  sourceVersion: string;
+  pageNumber: number;
+  text: string;
+  warnings: string[];
+}
+
+export interface DocumentDetail {
+  document: CourseDocument;
+  pages: DocumentPage[];
+}
+
+export interface DocumentBinary {
+  documentId: Id;
+  fileName: string;
+  mediaType: string;
+  bytes: Uint8Array;
+}
+
+export interface DocumentImportFailure {
+  fileName: string;
+  message: string;
+}
+
+export interface DocumentImportResult {
+  imported: CourseDocument[];
+  failed: DocumentImportFailure[];
+}
+
+export interface DocumentImportProgress {
+  courseId: Id;
+  current: number;
+  total: number;
+  fileName: string;
+  phase: "copying" | "parsing" | "complete" | "failed";
+}
+
 export type RunEventType =
   | "run.status.changed"
   | "agent.message.delta"
@@ -113,4 +183,182 @@ export interface ExplanationRequest {
   mode: ExplanationMode;
   language: string;
   includeVisual: boolean;
+}
+
+export interface ExplanationAccepted {
+  runId: Id;
+  status: RunStatus;
+  resourceId: Id | null;
+  conversationId: Id;
+}
+
+export interface ExplanationUpdate {
+  runId: Id;
+  conversationId: Id;
+  status: "running" | "succeeded" | "failed" | "cancelled";
+  delta: string;
+  message: string | null;
+}
+
+export interface ExplanationFollowUp {
+  conversationId: Id;
+  message: string;
+  language: string;
+}
+
+export interface QuestionOption {
+  id: Id;
+  label: "A" | "B" | "C" | "D";
+  text: string;
+}
+
+export type QuestionKind = "single_choice";
+
+export interface QuestionVerification {
+  verified: boolean;
+  checks: {
+    sourceSupport: boolean;
+    singleBestAnswer: boolean;
+    noAnswerLeak: boolean;
+    completeStem: boolean;
+  };
+  notes: string;
+  verifiedAt: IsoDateTime;
+}
+
+export interface Question {
+  id: Id;
+  courseId: Id;
+  conceptId: Id;
+  kind: QuestionKind;
+  stem: string;
+  options: QuestionOption[];
+  correctOptionId: Id;
+  rationale: string;
+  evidenceRefs: string[];
+  verification: QuestionVerification;
+  createdAt: IsoDateTime;
+}
+
+export interface PracticeRequest {
+  courseId: Id;
+  selection: SelectionContext;
+  topic: string;
+  language: string;
+  isRetest: boolean;
+}
+
+export type PracticePhase =
+  | "creating"
+  | "verifying"
+  | "ready"
+  | "evaluating"
+  | "remediating"
+  | "completed"
+  | "failed";
+
+export interface PracticeUpdate {
+  practiceId: Id;
+  phase: PracticePhase;
+  message: string | null;
+}
+
+export interface PracticeQuestionReady {
+  practiceId: Id;
+  question: Question;
+  isRetest: boolean;
+}
+
+export interface AttemptSubmission {
+  practiceId: Id;
+  optionId: Id;
+  reasoning: string;
+}
+
+export interface ReasoningReview {
+  reasoningCorrect: boolean;
+  reason: string;
+}
+
+export interface AttemptEvaluation {
+  attemptId: Id;
+  practiceId: Id;
+  questionId: Id;
+  correct: boolean;
+  correctOptionId: Id;
+  reasoningReview: ReasoningReview;
+  remediationRequired: boolean;
+  occurredAt: IsoDateTime;
+}
+
+export interface RemediationUpdate {
+  practiceId: Id;
+  status: "running" | "succeeded" | "failed";
+  delta: string;
+  message: string | null;
+}
+
+export interface RemediationUnit {
+  cause: string;
+  howToNotice: string;
+  explanation: string;
+}
+
+export type MasteryLevel = 0 | 1 | 2 | 3 | 4 | 5;
+
+export interface ConceptMastery {
+  conceptId: Id;
+  topic: string;
+  level: MasteryLevel;
+  evidenceCount: number;
+  lastAttemptAt: IsoDateTime | null;
+}
+
+export interface PracticeResult {
+  practiceId: Id;
+  evaluation: AttemptEvaluation | null;
+  remediation: RemediationUnit | null;
+  mastery: ConceptMastery;
+}
+
+export type ProviderId = "codex" | "openai_compatible" | "anthropic";
+
+export interface OpenAiCompatibleSettings {
+  label: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface AnthropicSettings {
+  apiKey: string;
+  model: string;
+}
+
+export interface ProviderSettingsSave {
+  activeProvider: ProviderId;
+  openaiCompatible: OpenAiCompatibleSettings;
+  anthropic: AnthropicSettings;
+}
+
+export interface ProviderSettingsView {
+  activeProvider: ProviderId;
+  openaiCompatible: {
+    label: string;
+    baseUrl: string;
+    model: string;
+    apiKeySet: boolean;
+  };
+  anthropic: {
+    model: string;
+    apiKeySet: boolean;
+  };
+}
+
+export interface ProviderStatusView {
+  id: ProviderId;
+  displayName: string;
+  available: boolean;
+  configured: boolean;
+  detail: string | null;
 }
