@@ -15,6 +15,9 @@
   },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "dev:desktop": "npm run dev -w @ai2sapien/desktop",
+    "dev:mobile": "npm run start -w @ai2sapien/mobile",
+    "package:win": "npm run package:win -w @ai2sapien/desktop",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "validate:contracts": "node scripts/validate-contracts.mjs",

@@ -1,0 +1,37 @@
+appId: com.ai2sapien.desktop
+productName: AI2Sapien
+asar: true
+
+directories:
+  output: release
+
+files:
+  - dist/**/*
+  - package.json
+  - "!dist/**/*.map"
+
+extraMetadata:
+  main: dist/main/main.js
+
+win:
+  executableName: AI2Sapien
+  artifactName: AI2Sapien-Setup-${version}-${arch}.${ext}
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AI2Sapien
+
+# 先保留 macOS 发布入口；当前迭代只构建 Windows。
+mac:
+  category: public.app-category.education
+  hardenedRuntime: true
+  target:
+    - dmg

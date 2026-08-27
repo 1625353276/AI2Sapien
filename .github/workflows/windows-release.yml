@@ -1,0 +1,28 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run package:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI2Sapien-Windows-x64
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error

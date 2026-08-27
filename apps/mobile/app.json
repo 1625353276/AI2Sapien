@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "AI2Sapien",
+    "slug": "ai2sapien",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "android": {
+      "package": "com.ai2sapien.mobile",
+      "edgeToEdgeEnabled": true
+    },
+    "ios": {
+      "bundleIdentifier": "com.ai2sapien.mobile",
+      "supportsTablet": true
+    }
+  }
+}

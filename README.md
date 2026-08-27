@@ -17,6 +17,8 @@ AI2Sapien 是一个本地优先的自适应学习桌面应用。学习者上传�
 - [x] Rate limit UI
 - [ ] Thread/Turn 流式演示
 - [x] Electron 安全桌面壳
+- [x] Windows x64 NSIS 安装包与 GitHub 构建流程
+- [x] Expo / React Native 手机伴随端框架
 - [ ] 材料上传与划词解释
 
 ## 为什么使用 Codex App Server
@@ -29,7 +31,8 @@ AI2Sapien 通过本机 `codex app-server` 连接 Codex，使用官方 ChatGPT �
 
 ```text
 apps/
-  desktop/            Electron + React 桌面端（下一开发切片）
+  desktop/            Electron + React Windows 桌面端
+  mobile/             Expo / React Native 手机伴随端框架
 packages/
   agent-runtime/      Codex App Server 进程与 JSON-RPC 适配
   contracts/          UI/Core 共享领域类型
@@ -50,6 +53,28 @@ docs/                 中文架构、接口和需求文档
 npm install
 npm run check
 ```
+
+启动 Windows 桌面开发版：
+
+```powershell
+npm run dev:desktop
+```
+
+生成 Windows x64 安装包：
+
+```powershell
+npm run package:win
+```
+
+安装包输出到 `apps/desktop/release/`。当前开发构建未做代码签名，正式发布前需要配置 Windows 签名证书。
+
+启动手机伴随端开发框架：
+
+```powershell
+npm run dev:mobile
+```
+
+用 Expo Go 扫描二维码即可查看。现阶段手机端只保留界面和共享契约入口，AI 运行时仍放在用户自己的桌面端；Android/iOS 业务与 macOS 客户端在后续迭代接入。
 
 只读取并脱敏显示本机 Codex 连接与登录状态：
 
