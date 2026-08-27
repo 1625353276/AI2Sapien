@@ -17,6 +17,9 @@ import type {
   ExplanationFollowUp,
   ExplanationRequest,
   ExplanationUpdate,
+  KnowledgeConcept,
+  KnowledgeExtractionProgress,
+  KnowledgeExtractionResult,
   PracticeQuestionReady,
   PracticeRequest,
   PracticeResult,
@@ -63,6 +66,11 @@ interface AI2SapienDesktopApi {
   getProviderState(): Promise<ProviderState>;
   saveProviderSettings(input: ProviderSettingsSave): Promise<ProviderState>;
   onProviderStateChanged(listener: (state: ProviderState) => void): () => void;
+  startKnowledgeExtraction(courseId: string): Promise<{ extractionId: string }>;
+  listKnowledgeConcepts(courseId: string): Promise<KnowledgeConcept[]>;
+  getKnowledgeResult(extractionId: string): Promise<KnowledgeExtractionResult | null>;
+  onKnowledgeProgress(listener: (progress: KnowledgeExtractionProgress) => void): () => void;
+  onKnowledgeComplete(listener: (result: KnowledgeExtractionResult) => void): () => void;
 }
 
 const api: AI2SapienDesktopApi = {
@@ -140,6 +148,23 @@ const api: AI2SapienDesktopApi = {
     };
     ipcRenderer.on("provider:state-changed", handler);
     return () => ipcRenderer.removeListener("provider:state-changed", handler);
+  },
+  startKnowledgeExtraction: (courseId) => ipcRenderer.invoke("knowledge:start-analysis", courseId),
+  listKnowledgeConcepts: (courseId) => ipcRenderer.invoke("knowledge:list-concepts", courseId),
+  getKnowledgeResult: (extractionId) => ipcRenderer.invoke("knowledge:get-result", extractionId),
+  onKnowledgeProgress: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: KnowledgeExtractionProgress): void => {
+      listener(progress);
+    };
+    ipcRenderer.on("knowledge:progress", handler);
+    return () => ipcRenderer.removeListener("knowledge:progress", handler);
+  },
+  onKnowledgeComplete: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, result: KnowledgeExtractionResult): void => {
+      listener(result);
+    };
+    ipcRenderer.on("knowledge:complete", handler);
+    return () => ipcRenderer.removeListener("knowledge:complete", handler);
   },
 };
 

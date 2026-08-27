@@ -15,6 +15,8 @@ import type {
 } from "@ai2sapien/contracts";
 import { CodexProvider, ModelRuntimeImpl } from "@ai2sapien/model-providers";
 
+import { KnowledgeController } from "./knowledge-controller.js";
+import { KnowledgeStore } from "./knowledge-store.js";
 import { LibraryStore } from "./library-store.js";
 import { PracticeController } from "./practice-controller.js";
 import { PracticeStore } from "./practice-store.js";
@@ -29,6 +31,8 @@ let providers: ProviderSettingsStore | null = null;
 let library: LibraryStore | null = null;
 let practiceStore: PracticeStore | null = null;
 let practice: PracticeController | null = null;
+let knowledgeStore: KnowledgeStore | null = null;
+let knowledge: KnowledgeController | null = null;
 
 function rendererDevelopmentUrl(): string | null {
   const argument = process.argv.find((item) => item.startsWith("--dev-server-url="));
@@ -203,6 +207,9 @@ function registerIpc(): void {
     }
     return next;
   });
+  ipcMain.handle("knowledge:start-analysis", (_event, courseId: string) => requireKnowledge().startExtraction(courseId));
+  ipcMain.handle("knowledge:list-concepts", (_event, courseId: string) => requireKnowledge().listConcepts(courseId));
+  ipcMain.handle("knowledge:get-result", (_event, extractionId: string) => requireKnowledge().getResult(extractionId));
 }
 
 async function publishRuntimeStatus(): Promise<void> {
@@ -228,11 +235,14 @@ app.whenReady().then(async () => {
   await library.initialize();
   practiceStore = new PracticeStore(learningDataRoot);
   await practiceStore.initialize();
+  knowledgeStore = new KnowledgeStore(learningDataRoot);
+  await knowledgeStore.initialize();
   providers = new ProviderSettingsStore(userData);
   const settings = await providers.load();
   modelRuntime = new ModelRuntimeImpl(new CodexProvider(client), settings);
   runtime = new RuntimeController(client, modelRuntime);
   practice = new PracticeController(modelRuntime, practiceStore);
+  knowledge = new KnowledgeController(modelRuntime, library, knowledgeStore);
 
   runtime.onInvalidated(() => {
     void publishRuntimeStatus();
@@ -242,6 +252,8 @@ app.whenReady().then(async () => {
   practice.onPracticeQuestion(forwardEvent("learning:practice-question"));
   practice.onRemediationUpdate(forwardEvent("learning:practice-remediation"));
   practice.onPracticeResult(forwardEvent("learning:practice-result"));
+  knowledge.onKnowledgeProgress(forwardEvent("knowledge:progress"));
+  knowledge.onKnowledgeComplete(forwardEvent("knowledge:complete"));
 
   registerIpc();
   await createWindow();
@@ -287,4 +299,9 @@ function requireModelRuntime(): ModelRuntimeImpl {
 function requireProviders(): ProviderSettingsStore {
   if (!providers) throw new Error("提供者配置尚未初始化。");
   return providers;
+}
+
+function requireKnowledge(): KnowledgeController {
+  if (!knowledge) throw new Error("知识提取引擎尚未初始化。");
+  return knowledge;
 }

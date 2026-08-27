@@ -6,6 +6,9 @@ import type {
   RunEvent,
 } from "@ai2sapien/contracts";
 
+export * from "./knowledge-extraction.js";
+export * from "./knowledge-engine.js";
+
 export type LoginFlow = "browser" | "device_code";
 
 export interface BrowserLoginSession {

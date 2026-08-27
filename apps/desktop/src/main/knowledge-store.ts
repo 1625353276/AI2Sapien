@@ -1,0 +1,128 @@
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import type {
+  Id,
+  IsoDateTime,
+  KnowledgeConcept,
+  KnowledgeExtractionResult,
+} from "@ai2sapien/contracts";
+import type { KnowledgeExtractionStorePort } from "@ai2sapien/learning-core";
+
+interface KnowledgeDatabase {
+  schemaVersion: 1;
+  concepts: KnowledgeConcept[];
+  extractions: StoredExtraction[];
+}
+
+interface StoredExtraction extends KnowledgeExtractionResult {
+  _syncedAt: IsoDateTime;
+}
+
+const EMPTY_DATABASE: KnowledgeDatabase = {
+  schemaVersion: 1,
+  concepts: [],
+  extractions: [],
+};
+
+export class KnowledgeStore implements KnowledgeExtractionStorePort {
+  readonly #rootDirectory: string;
+  readonly #databasePath: string;
+  #database: KnowledgeDatabase = structuredClone(EMPTY_DATABASE);
+  #initialized: Promise<void> | null = null;
+  #writeQueue: Promise<void> = Promise.resolve();
+
+  constructor(rootDirectory: string) {
+    this.#rootDirectory = rootDirectory;
+    this.#databasePath = join(rootDirectory, "knowledge.json");
+  }
+
+  initialize(): Promise<void> {
+    if (!this.#initialized) this.#initialized = this.#initializeInternal();
+    return this.#initialized;
+  }
+
+  async listConcepts(courseId: string): Promise<KnowledgeConcept[]> {
+    await this.initialize();
+    return this.#database.concepts
+      .filter((concept) => concept.courseId === courseId)
+      .map((concept) => structuredClone(concept));
+  }
+
+  async saveConcepts(courseId: string, concepts: KnowledgeConcept[]): Promise<void> {
+    await this.initialize();
+    this.#database.concepts = this.#database.concepts.filter((concept) => concept.courseId !== courseId);
+    this.#database.concepts.push(...concepts.map((concept) => structuredClone(concept)));
+    await this.#persist();
+  }
+
+  async saveResult(result: KnowledgeExtractionResult): Promise<void> {
+    await this.initialize();
+    const index = this.#database.extractions.findIndex(
+      (extraction) => extraction.extractionId === result.extractionId,
+    );
+    const stored: StoredExtraction = { ...result, _syncedAt: new Date().toISOString() };
+    if (index >= 0) this.#database.extractions[index] = stored;
+    else this.#database.extractions.push(stored);
+    await this.#persist();
+  }
+
+  async getResult(extractionId: string): Promise<KnowledgeExtractionResult | null> {
+    await this.initialize();
+    const stored = this.#database.extractions.find((extraction) => extraction.extractionId === extractionId);
+    return stored ? stripSyncMeta(stored) : null;
+  }
+
+  async listExtractions(courseId: Id): Promise<KnowledgeExtractionResult[]> {
+    await this.initialize();
+    return this.#database.extractions
+      .filter((extraction) => extraction.courseId === courseId)
+      .map(stripSyncMeta)
+      .sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+  }
+
+  async #initializeInternal(): Promise<void> {
+    await mkdir(this.#rootDirectory, { recursive: true });
+    try {
+      const parsed = JSON.parse(await readFile(this.#databasePath, "utf8")) as unknown;
+      this.#database = validateDatabase(parsed);
+    } catch (error) {
+      const code = isNodeError(error) ? error.code : null;
+      if (code !== "ENOENT") throw error;
+      this.#database = structuredClone(EMPTY_DATABASE);
+      await this.#persist();
+    }
+  }
+
+  async #persist(): Promise<void> {
+    const operation = this.#writeQueue.then(async () => {
+      await mkdir(this.#rootDirectory, { recursive: true });
+      const temporaryPath = `${this.#databasePath}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(temporaryPath, `${JSON.stringify(this.#database, null, 2)}\n`, "utf8");
+      await rename(temporaryPath, this.#databasePath);
+    });
+    this.#writeQueue = operation.catch(() => undefined);
+    await operation;
+  }
+}
+
+function stripSyncMeta(extraction: StoredExtraction): KnowledgeExtractionResult {
+  const { _syncedAt: _syncedAt, ...publicResult } = extraction;
+  return publicResult;
+}
+
+function validateDatabase(value: unknown): KnowledgeDatabase {
+  if (!isRecord(value) || value.schemaVersion !== 1) throw new Error("知识库数据库版本无效。");
+  if (!Array.isArray(value.concepts) || !Array.isArray(value.extractions)) {
+    throw new Error("知识库数据库结构无效。");
+  }
+  return value as unknown as KnowledgeDatabase;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}

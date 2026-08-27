@@ -380,3 +380,54 @@ export interface ProviderStatusView {
   configured: boolean;
   detail: string | null;
 }
+
+export interface KnowledgeConceptSource {
+  documentId: Id;
+  sourceVersion: string;
+  pageNumber: number;
+  sourceLabel: string;
+  excerpt: string;
+  evidenceRefs: string[];
+}
+
+export interface KnowledgeConcept {
+  id: Id;
+  courseId: Id;
+  title: string;
+  aliases: string[];
+  summary: string;
+  sources: KnowledgeConceptSource[];
+  evidenceRefs: string[];
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export type KnowledgeExtractionPhase =
+  | "queued"
+  | "chunking"
+  | "analyzing"
+  | "merging"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface KnowledgeExtractionProgress {
+  courseId: Id;
+  extractionId: Id;
+  phase: KnowledgeExtractionPhase;
+  current: number;
+  total: number;
+  message: string | null;
+  occurredAt: IsoDateTime;
+}
+
+export interface KnowledgeExtractionResult {
+  extractionId: Id;
+  courseId: Id;
+  concepts: KnowledgeConcept[];
+  chunkCount: number;
+  analyzedChunkCount: number;
+  failedChunkCount: number;
+  startedAt: IsoDateTime;
+  completedAt: IsoDateTime;
+}

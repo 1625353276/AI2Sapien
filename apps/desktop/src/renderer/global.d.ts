@@ -15,6 +15,9 @@ import type {
   ExplanationFollowUp,
   ExplanationRequest,
   ExplanationUpdate,
+  KnowledgeConcept,
+  KnowledgeExtractionProgress,
+  KnowledgeExtractionResult,
   PracticeQuestionReady,
   PracticeRequest,
   PracticeResult,
@@ -61,6 +64,11 @@ interface AI2SapienDesktopApi {
   getProviderState(): Promise<ProviderState>;
   saveProviderSettings(input: ProviderSettingsSave): Promise<ProviderState>;
   onProviderStateChanged(listener: (state: ProviderState) => void): () => void;
+  startKnowledgeExtraction(courseId: string): Promise<{ extractionId: string }>;
+  listKnowledgeConcepts(courseId: string): Promise<KnowledgeConcept[]>;
+  getKnowledgeResult(extractionId: string): Promise<KnowledgeExtractionResult | null>;
+  onKnowledgeProgress(listener: (progress: KnowledgeExtractionProgress) => void): () => void;
+  onKnowledgeComplete(listener: (result: KnowledgeExtractionResult) => void): () => void;
 }
 
 declare global {
