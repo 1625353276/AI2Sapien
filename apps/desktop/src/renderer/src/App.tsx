@@ -11,6 +11,10 @@ import type {
   DocumentPage,
   ExplanationMode,
   ExplanationUpdate,
+  KnowledgeConcept,
+  KnowledgeExtractionPhase,
+  KnowledgeExtractionProgress,
+  KnowledgeExtractionResult,
   PracticePhase,
   ProviderId,
   ProviderSettingsView,
@@ -22,7 +26,7 @@ import type {
   RuntimeStatusSnapshot,
 } from "@ai2sapien/contracts";
 
-type View = "home" | "library" | "practice";
+type View = "home" | "library" | "map" | "practice";
 type ReaderMode = "text" | "split" | "original";
 
 interface SelectedSource {
@@ -67,7 +71,7 @@ interface ProviderUiState {
 const navigation = [
   { id: "home", label: "学习台", icon: "home", enabled: true },
   { id: "library", label: "资料库", icon: "library", enabled: true },
-  { id: "map", label: "知识地图", icon: "map", enabled: false },
+  { id: "map", label: "知识地图", icon: "map", enabled: true },
   { id: "practice", label: "练习与补救", icon: "practice", enabled: true },
   { id: "review", label: "复习队列", icon: "review", enabled: false },
 ] as const;
@@ -84,7 +88,7 @@ export function App() {
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [documentDetail, setDocumentDetail] = useState<DocumentDetail | null>(null);
   const [documentUrl, setDocumentUrl] = useState<string | null>(null);
-  const [readerMode, setReaderMode] = useState<ReaderMode>("split");
+  const [readerMode, setReaderMode] = useState<ReaderMode>("original");
   const [libraryLoading, setLibraryLoading] = useState(true);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [creatingCourse, setCreatingCourse] = useState(false);
@@ -115,6 +119,12 @@ export function App() {
   const [practiceBusy, setPracticeBusy] = useState(false);
   const practiceCourseRef = useRef<string | null>(null);
   const startingPractice = practice?.phase === "creating" || practice?.phase === "verifying";
+  const [conceptsByCourse, setConceptsByCourse] = useState<Record<string, KnowledgeConcept[]>>({});
+  const [resultsByCourse, setResultsByCourse] = useState<Record<string, KnowledgeExtractionResult | undefined>>({});
+  const [progressByCourse, setProgressByCourse] = useState<Record<string, KnowledgeExtractionProgress | undefined>>({});
+  const [analyzingCourseIds, setAnalyzingCourseIds] = useState<string[]>([]);
+  const [knowledgeLoadingCourseIds, setKnowledgeLoadingCourseIds] = useState<string[]>([]);
+  const [targetPage, setTargetPage] = useState<{ documentId: string; pageNumber: number } | null>(null);
 
   const refreshMastery = useCallback(async (courseId: string) => {
     try {
@@ -135,6 +145,50 @@ export function App() {
     } catch {
       setConceptAttempts([]);
     }
+  }, []);
+
+  const refreshKnowledgeConcepts = useCallback(async (courseId: string) => {
+    setKnowledgeLoadingCourseIds((current) => current.includes(courseId) ? current : [...current, courseId]);
+    try {
+      const next = await window.ai2sapien.listKnowledgeConcepts(courseId);
+      setConceptsByCourse((current) => ({ ...current, [courseId]: next }));
+    } catch {
+      setConceptsByCourse((current) => ({ ...current, [courseId]: [] }));
+    } finally {
+      setKnowledgeLoadingCourseIds((current) => current.filter((id) => id !== courseId));
+    }
+  }, []);
+
+  const analyzeCourse = useCallback(async (courseId: string) => {
+    if (!courseId || analyzingCourseIds.includes(courseId)) return;
+    setAnalyzingCourseIds((current) => (current.includes(courseId) ? current : [...current, courseId]));
+    setResultsByCourse((current) => ({ ...current, [courseId]: undefined }));
+    setProgressByCourse((current) => ({
+      ...current,
+      [courseId]: {
+        courseId,
+        extractionId: "",
+        phase: "queued",
+        current: 0,
+        total: 0,
+        message: null,
+        occurredAt: new Date().toISOString(),
+      },
+    }));
+    try {
+      await window.ai2sapien.startKnowledgeExtraction(courseId);
+    } catch (error) {
+      setAnalyzingCourseIds((current) => current.filter((id) => id !== courseId));
+      setNotice(friendlyError(error));
+    }
+  }, [analyzingCourseIds]);
+
+  const openSourceInLibrary = useCallback((documentId: string, pageNumber: number) => {
+    setTargetPage({ documentId, pageNumber });
+    setSelectedDocumentId(documentId);
+    setReaderMode("original");
+    setSelectedSource(null);
+    setView("library");
   }, []);
 
   useEffect(() => {
@@ -263,6 +317,27 @@ export function App() {
   }, [refreshCourses, refreshMastery, refreshRuntime]);
 
   useEffect(() => {
+    const removeKnowledgeProgress = window.ai2sapien.onKnowledgeProgress((progress) => {
+      setProgressByCourse((current) => ({ ...current, [progress.courseId]: progress }));
+      if (progress.phase === "failed") {
+        setAnalyzingCourseIds((current) => current.filter((id) => id !== progress.courseId));
+        setNotice(progress.message ?? "课程资料分析失败，请重试。");
+      }
+    });
+    const removeKnowledgeComplete = window.ai2sapien.onKnowledgeComplete((result) => {
+      setResultsByCourse((current) => ({ ...current, [result.courseId]: result }));
+      setProgressByCourse((current) => ({ ...current, [result.courseId]: undefined }));
+      setConceptsByCourse((current) => ({ ...current, [result.courseId]: result.concepts }));
+      setKnowledgeLoadingCourseIds((current) => current.filter((id) => id !== result.courseId));
+      setAnalyzingCourseIds((current) => current.filter((id) => id !== result.courseId));
+    });
+    return () => {
+      removeKnowledgeProgress();
+      removeKnowledgeComplete();
+    };
+  }, []);
+
+  useEffect(() => {
     void window.ai2sapien.getProviderState().then((state) => {
       setProviderState(state);
       setProviderDraft({
@@ -283,7 +358,8 @@ export function App() {
       return;
     }
     void refreshDocuments(selectedCourseId).catch((error: unknown) => setNotice(friendlyError(error)));
-  }, [refreshDocuments, selectedCourseId]);
+    void refreshKnowledgeConcepts(selectedCourseId);
+  }, [refreshDocuments, refreshKnowledgeConcepts, selectedCourseId]);
 
   useEffect(() => {
     let objectUrl: string | null = null;
@@ -366,6 +442,9 @@ export function App() {
       const result = await window.ai2sapien.importDocuments(selectedCourseId);
       const nextDocuments = await refreshDocuments(selectedCourseId);
       await refreshCourses();
+      if (result.imported.length > 0) {
+        setResultsByCourse((current) => ({ ...current, [selectedCourseId]: undefined }));
+      }
       if (result.imported[0]) setSelectedDocumentId(result.imported[0].id);
       if (result.imported.length > 0) {
         setNotice(`成功导入 ${String(result.imported.length)} 份 PDF${result.failed.length > 0 ? `，${String(result.failed.length)} 份失败` : ""}。`);
@@ -567,6 +646,14 @@ export function App() {
   const selectedCourse = courses.find((course) => course.id === selectedCourseId) ?? null;
   const selectedConcept = (masteryByCourse[selectedCourseId ?? ""] ?? [])
     .find((concept) => concept.conceptId === selectedConceptId) ?? null;
+  const selectedConcepts = conceptsByCourse[selectedCourseId ?? ""] ?? [];
+  const selectedResult = resultsByCourse[selectedCourseId ?? ""] ?? null;
+  const selectedProgress = progressByCourse[selectedCourseId ?? ""] ?? null;
+  const analyzing = selectedCourseId ? analyzingCourseIds.includes(selectedCourseId) : false;
+  const knowledgeLoading = selectedCourseId ? knowledgeLoadingCourseIds.includes(selectedCourseId) : false;
+  const analyzeDisabled = !selectedCourseId || (selectedCourse?.documentCount ?? 0) === 0 || analyzing;
+  const appliedPage = targetPage && targetPage.documentId === selectedDocumentId ? targetPage.pageNumber : null;
+  const displayDocumentUrl = documentUrl ? (appliedPage ? `${documentUrl}#page=${appliedPage}` : documentUrl) : null;
   const authenticated = status?.auth.authenticated ?? false;
   const plan = formatPlan(status?.auth.planType);
 
@@ -587,7 +674,7 @@ export function App() {
 
       <main className={view === "library" ? "library-main" : undefined}>
         <header className="topbar">
-          <div><p className="eyebrow">{view === "home" ? "LEARNING WORKSPACE" : view === "practice" ? "PRACTICE & REMEDIAL" : "SOURCE-BASED LIBRARY"}</p><h1>{view === "home" ? "开始今天的理解之旅。" : view === "practice" ? selectedCourse?.title ?? "练习与补救" : selectedCourse?.title ?? "资料库"}</h1></div>
+          <div><p className="eyebrow">{view === "home" ? "LEARNING WORKSPACE" : view === "library" ? "SOURCE-BASED LIBRARY" : view === "map" ? "KNOWLEDGE MAP" : "PRACTICE & REMEDIAL"}</p><h1>{view === "home" ? "开始今天的理解之旅。" : view === "practice" ? selectedCourse?.title ?? "练习与补救" : view === "map" ? selectedCourse?.title ?? "知识地图" : selectedCourse?.title ?? "资料库"}</h1></div>
           <div className="topbar-actions"><div className={`connection-pill ${authenticated ? "online" : "offline"}`}><span />{loadingStatus ? "正在连接" : authenticated ? `${plan} 已连接` : "尚未登录"}</div><button className="provider-button" type="button" onClick={() => setProviderModalOpen(true)}>模型 · {providerName(providerState?.active)}</button></div>
         </header>
         {notice && <div className="notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div>}
@@ -596,8 +683,10 @@ export function App() {
           <HomeView action={runtimeAction} courses={courses} loading={loadingStatus || libraryLoading} masteryByCourse={masteryByCourse} onCreateCourse={() => setCreatingCourse(true)} onLogin={() => void login()} onLogout={() => void logout()} onOpenCourse={(courseId) => { setSelectedCourseId(courseId); setView("library"); }} onRefresh={() => void refreshRuntime()} status={status} />
         ) : view === "practice" ? (
           <PracticeView attempts={conceptAttempts} busy={practiceBusy || startingPractice} concepts={masteryByCourse[selectedCourseId ?? ""] ?? []} courseId={selectedCourseId} practice={practice} selectedConcept={selectedConcept} setPractice={setPractice} onClosePractice={closePractice} onGoHome={() => setView("home")} onRetest={() => void (selectedConcept && beginConceptPractice(selectedConcept))} onSelectConcept={(concept) => { setSelectedConceptId(concept.conceptId); void beginConceptPractice(concept); }} onSubmitAnswer={() => void submitPracticeAnswer()} />
+        ) : view === "map" ? (
+          <MapView analyzeDisabled={analyzeDisabled} analyzing={analyzing} concepts={selectedConcepts} courses={courses} knowledgeLoading={knowledgeLoading} onCreateCourse={() => setCreatingCourse(true)} onOpenSource={openSourceInLibrary} onGoHome={() => setView("home")} onSelectCourse={setSelectedCourseId} progress={selectedProgress} result={selectedResult} selectedCourse={selectedCourse} selectedCourseId={selectedCourseId} onAnalyze={() => void analyzeCourse(selectedCourseId ?? "")} />
         ) : (
-          <LibraryView courses={courses} detail={documentDetail} documentLoading={documentLoading} documentUrl={documentUrl} documents={documents} importing={importing} importProgress={importProgress} mode={readerMode} onCaptureSelection={captureSelection} onCreateCourse={() => setCreatingCourse(true)} onImport={() => void importDocuments()} onModeChange={setReaderMode} onSelectCourse={setSelectedCourseId} onSelectDocument={setSelectedDocumentId} selectedCourseId={selectedCourseId} selectedDocumentId={selectedDocumentId} selectedSource={selectedSource} onExplain={() => void explainSelection()} explanationMode={explanationMode} onExplanationModeChange={setExplanationMode} />
+          <LibraryView courses={courses} detail={documentDetail} documentLoading={documentLoading} documentUrl={displayDocumentUrl} documents={documents} importing={importing} importProgress={importProgress} mode={readerMode} onCaptureSelection={captureSelection} onCreateCourse={() => setCreatingCourse(true)} onImport={() => void importDocuments()} onModeChange={setReaderMode} onSelectCourse={setSelectedCourseId} onSelectDocument={(documentId) => { setTargetPage(null); setSelectedDocumentId(documentId); }} selectedCourseId={selectedCourseId} selectedDocumentId={selectedDocumentId} selectedSource={selectedSource} onExplain={() => void explainSelection()} explanationMode={explanationMode} onExplanationModeChange={setExplanationMode} analyzing={analyzing} analyzeDisabled={analyzeDisabled} analysisResult={selectedResult} analysisProgress={selectedProgress} onAnalyze={() => void analyzeCourse(selectedCourseId ?? "")} />
         )}
       </main>
 
@@ -697,11 +786,11 @@ function PracticeView({ courseId, concepts, attempts, practice, busy, selectedCo
 }
 
 function HomeView({ status, loading, action, courses, masteryByCourse, onRefresh, onLogin, onLogout, onCreateCourse, onOpenCourse }: { status: RuntimeStatusSnapshot | null; loading: boolean; action: "login" | "logout" | "refresh" | null; courses: Course[]; masteryByCourse: Record<string, ConceptMastery[]>; onRefresh: () => void; onLogin: () => void; onLogout: () => void; onCreateCourse: () => void; onOpenCourse: (courseId: string) => void }) {
-  return <><section className="hero-grid"><article className="hero-card"><div className="hero-copy"><p className="eyebrow">FROM SOURCE TO UNDERSTANDING</p><h2>把课程资料，<br /><em>蒸馏</em>成真正理解。</h2><p className="hero-description">导入 PDF，保留每一页来源；选择不熟悉的概念，让 AI 解释它为什么成立、为什么容易混淆，并继续追问，再用一道小题验证理解。</p><div className="hero-actions"><button className="primary-button" type="button" onClick={onCreateCourse}>{courses.length === 0 ? "创建第一门课程" : "新建课程"}<span>→</span></button><span className="ready-tag">PDF 学习已开放</span></div></div><KnowledgeOrbit /></article><RuntimeCard status={status} loading={loading} action={action} onRefresh={onRefresh} onLogin={onLogin} onLogout={onLogout} /></section><section className="section-block"><div className="section-heading"><div><p className="eyebrow">YOUR COURSES</p><h2>本地课程</h2></div><span>{String(courses.length)} 门课程</span></div>{courses.length === 0 ? <button className="empty-course" type="button" onClick={onCreateCourse}><strong>还没有课程</strong><span>创建课程后导入 Week 1–3 PDF →</span></button> : <div className="course-grid">{courses.map((course) => <button className="course-card" key={course.id} onClick={() => onOpenCourse(course.id)} type="button"><span>{String(course.documentCount).padStart(2, "0")}</span><strong>{course.title}</strong><small>{String(course.documentCount)} 份资料 · 更新于 {formatDate(course.updatedAt)}</small>{renderCourseMastery(masteryByCourse[course.id])}</button>)}</div>}</section></>;
+  return <><section className="hero-grid"><article className="hero-card"><div className="hero-copy"><p className="eyebrow">FROM SOURCE TO UNDERSTANDING</p><h2>把课程资料，<br /><em>蒸馏</em>成真正理解。</h2><p className="hero-description">导入课程的全部 PDF，AI 自动分析整门课程，生成带来源页码的知识地图；对其中不熟悉的概念，再就地划选原文做解释与练习。</p><div className="hero-actions"><button className="primary-button" type="button" onClick={onCreateCourse}>{courses.length === 0 ? "创建第一门课程" : "新建课程"}<span>→</span></button><span className="ready-tag">PDF 学习已开放</span></div></div><KnowledgeOrbit /></article><RuntimeCard status={status} loading={loading} action={action} onRefresh={onRefresh} onLogin={onLogin} onLogout={onLogout} /></section><section className="section-block"><div className="section-heading"><div><p className="eyebrow">YOUR COURSES</p><h2>本地课程</h2></div><span>{String(courses.length)} 门课程</span></div>{courses.length === 0 ? <button className="empty-course" type="button" onClick={onCreateCourse}><strong>还没有课程</strong><span>创建课程后导入 Week 1–3 PDF →</span></button> : <div className="course-grid">{courses.map((course) => <button className="course-card" key={course.id} onClick={() => onOpenCourse(course.id)} type="button"><span>{String(course.documentCount).padStart(2, "0")}</span><strong>{course.title}</strong><small>{String(course.documentCount)} 份资料 · 更新于 {formatDate(course.updatedAt)}</small>{renderCourseMastery(masteryByCourse[course.id])}</button>)}</div>}</section></>;
 }
 
-function LibraryView({ courses, documents, selectedCourseId, selectedDocumentId, detail, documentUrl, documentLoading, importing, importProgress, mode, selectedSource, explanationMode, onSelectCourse, onSelectDocument, onCreateCourse, onImport, onModeChange, onCaptureSelection, onExplain, onExplanationModeChange }: { courses: Course[]; documents: CourseDocument[]; selectedCourseId: string | null; selectedDocumentId: string | null; detail: DocumentDetail | null; documentUrl: string | null; documentLoading: boolean; importing: boolean; importProgress: DocumentImportProgress | null; mode: ReaderMode; selectedSource: SelectedSource | null; explanationMode: ExplanationMode; onSelectCourse: (courseId: string) => void; onSelectDocument: (documentId: string) => void; onCreateCourse: () => void; onImport: () => void; onModeChange: (mode: ReaderMode) => void; onCaptureSelection: (page: DocumentPage, container: HTMLElement) => void; onExplain: () => void; onExplanationModeChange: (mode: ExplanationMode) => void }) {
-  return <section className="library-workspace"><aside className="library-rail"><div className="rail-section"><div className="rail-heading"><span>课程</span><button type="button" onClick={onCreateCourse}>＋</button></div><select value={selectedCourseId ?? ""} onChange={(event) => onSelectCourse(event.target.value)}>{courses.length === 0 && <option value="">请先创建课程</option>}{courses.map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}</select></div><div className="rail-section document-section"><div className="rail-heading"><span>PDF 资料</span><small>{String(documents.length)}</small></div><div className="document-list">{documents.map((document) => <button className={selectedDocumentId === document.id ? "active" : ""} key={document.id} onClick={() => onSelectDocument(document.id)} type="button"><DocumentIcon /><span><strong>{document.displayName}</strong><small>{document.pageCount ? `${String(document.pageCount)} 页` : "处理中"} · {formatBytes(document.sizeBytes)}</small></span></button>)}</div></div><button className="import-button" disabled={!selectedCourseId || importing} onClick={onImport} type="button">{importing ? `${importProgress?.phase === "parsing" ? "解析" : "导入"} ${String(importProgress?.current ?? 0)}/${String(importProgress?.total ?? 0)}` : "＋ 导入 PDF"}</button></aside><div className="reader-shell">{!selectedCourseId ? <EmptyReader title="先创建一门课程" text="课程用于组织资料、知识点、题目和学习记录。" action="创建课程" onAction={onCreateCourse} /> : documents.length === 0 ? <EmptyReader title="导入第一份 PDF" text="可一次选择多份 Week 1–3 课件，系统会逐页提取文本并保留原始视觉页面。" action="选择 PDF" onAction={onImport} /> : documentLoading || !detail ? <div className="reader-loading"><span /><p>正在读取资料与来源页…</p></div> : <><div className="reader-toolbar"><div><p className="eyebrow">SOURCE DOCUMENT</p><h2>{detail.document.displayName}</h2><small>SHA-256 来源版本 {detail.document.sourceVersion.slice(0, 12)} · {String(detail.document.pageCount ?? 0)} 页</small></div><div className="reader-tabs"><button className={mode === "text" ? "active" : ""} onClick={() => onModeChange("text")} type="button">可选文本</button><button className={mode === "split" ? "active" : ""} onClick={() => onModeChange("split")} type="button">对照</button><button className={mode === "original" ? "active" : ""} onClick={() => onModeChange("original")} type="button">原始 PDF</button></div></div><div className={`reader-content mode-${mode}`}>{mode !== "original" && <div className="text-pages"><div className="reader-hint"><span>划选文字</span>后可按来源向 AI 提问，回答不会直接接触你的文件路径。</div>{detail.pages.map((page) => <article className="text-page" key={page.pageNumber} onMouseUp={(event) => onCaptureSelection(page, event.currentTarget)}><header><span>PAGE {String(page.pageNumber).padStart(2, "0")}</span><small>{String(page.text.length)} 字符</small></header>{page.text ? <p>{page.text}</p> : <div className="page-warning">本页没有提取到文本，请在右侧查看原始页面。</div>}{selectedSource?.page.pageNumber === page.pageNumber && <div className="selection-card"><p>“{selectedSource.text.slice(0, 120)}{selectedSource.text.length > 120 ? "…" : ""}”</p><select value={explanationMode} onChange={(event) => onExplanationModeChange(event.target.value as ExplanationMode)}><option value="mechanism">解释原理与为什么</option><option value="simple">简单解释</option><option value="compare">对比易混概念</option><option value="example">举例解释</option><option value="visual">视觉化解释</option><option value="socratic">引导式解释</option></select><button type="button" onClick={onExplain}>让 AI 解释 →</button></div>}</article>)}</div>}{mode !== "text" && documentUrl && <iframe className="pdf-frame" src={documentUrl} title={`${detail.document.displayName} 原始 PDF`} />}</div></>}</div></section>;
+function LibraryView({ courses, documents, selectedCourseId, selectedDocumentId, detail, documentUrl, documentLoading, importing, importProgress, mode, selectedSource, explanationMode, analyzing, analyzeDisabled, analysisResult, analysisProgress, onSelectCourse, onSelectDocument, onCreateCourse, onImport, onModeChange, onCaptureSelection, onExplain, onExplanationModeChange, onAnalyze }: { courses: Course[]; documents: CourseDocument[]; selectedCourseId: string | null; selectedDocumentId: string | null; detail: DocumentDetail | null; documentUrl: string | null; documentLoading: boolean; importing: boolean; importProgress: DocumentImportProgress | null; mode: ReaderMode; selectedSource: SelectedSource | null; explanationMode: ExplanationMode; analyzing: boolean; analyzeDisabled: boolean; analysisResult: KnowledgeExtractionResult | null; analysisProgress: KnowledgeExtractionProgress | null; onSelectCourse: (courseId: string) => void; onSelectDocument: (documentId: string) => void; onCreateCourse: () => void; onImport: () => void; onModeChange: (mode: ReaderMode) => void; onCaptureSelection: (page: DocumentPage, container: HTMLElement) => void; onExplain: () => void; onExplanationModeChange: (mode: ExplanationMode) => void; onAnalyze: () => void }) {
+  return <section className="library-workspace"><aside className="library-rail"><div className="rail-section"><div className="rail-heading"><span>课程</span><button type="button" onClick={onCreateCourse}>＋</button></div><select value={selectedCourseId ?? ""} onChange={(event) => onSelectCourse(event.target.value)}>{courses.length === 0 && <option value="">请先创建课程</option>}{courses.map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}</select></div><div className="rail-section document-section"><div className="rail-heading"><span>PDF 资料</span><small>{String(documents.length)}</small></div><div className="document-list">{documents.map((document) => <button className={selectedDocumentId === document.id ? "active" : ""} key={document.id} onClick={() => onSelectDocument(document.id)} type="button"><DocumentIcon /><span><strong>{document.displayName}</strong><small>{document.pageCount ? `${String(document.pageCount)} 页` : "处理中"} · {formatBytes(document.sizeBytes)}</small></span></button>)}</div></div><button className="import-button" disabled={!selectedCourseId || importing} onClick={onImport} type="button">{importing ? `${importProgress?.phase === "parsing" ? "解析" : "导入"} ${String(importProgress?.current ?? 0)}/${String(importProgress?.total ?? 0)}` : "＋ 导入 PDF"}</button><AnalysisPanel compact analyzing={analyzing} disabled={analyzeDisabled} progress={analysisProgress} result={analysisResult} conceptCount={documents.length} onAnalyze={onAnalyze} /></aside><div className="reader-shell">{!selectedCourseId ? <EmptyReader title="先创建一门课程" text="课程用于组织资料、知识点、题目和学习记录。" action="创建课程" onAction={onCreateCourse} /> : documents.length === 0 ? <EmptyReader title="导入第一份 PDF" text="可一次选择多份 Week 1–3 课件，系统会逐页提取文本并保留原始视觉页面。" action="选择 PDF" onAction={onImport} /> : documentLoading || !detail ? <div className="reader-loading"><span /><p>正在读取资料与来源页…</p></div> : <><div className="reader-toolbar"><div><p className="eyebrow">SOURCE DOCUMENT</p><h2>{detail.document.displayName}</h2><small>SHA-256 来源版本 {detail.document.sourceVersion.slice(0, 12)} · {String(detail.document.pageCount ?? 0)} 页</small></div><div className="reader-tabs"><button className={mode === "text" ? "active" : ""} onClick={() => onModeChange("text")} type="button">可选文本</button><button className={mode === "split" ? "active" : ""} onClick={() => onModeChange("split")} type="button">对照</button><button className={mode === "original" ? "active" : ""} onClick={() => onModeChange("original")} type="button">原始 PDF</button></div></div><div className={`reader-content mode-${mode}`}>{mode !== "original" && <div className="text-pages"><div className="reader-hint"><span>划选文字</span>后可按来源向 AI 提问，回答不会直接接触你的文件路径。</div>{detail.pages.map((page) => <article className="text-page" key={page.pageNumber} onMouseUp={(event) => onCaptureSelection(page, event.currentTarget)}><header><span>PAGE {String(page.pageNumber).padStart(2, "0")}</span><small>{String(page.text.length)} 字符</small></header>{page.text ? <p>{page.text}</p> : <div className="page-warning">本页没有提取到文本，请在右侧查看原始页面。</div>}{selectedSource?.page.pageNumber === page.pageNumber && <div className="selection-card"><p>“{selectedSource.text.slice(0, 120)}{selectedSource.text.length > 120 ? "…" : ""}”</p><select value={explanationMode} onChange={(event) => onExplanationModeChange(event.target.value as ExplanationMode)}><option value="mechanism">解释原理与为什么</option><option value="simple">简单解释</option><option value="compare">对比易混概念</option><option value="example">举例解释</option><option value="visual">视觉化解释</option><option value="socratic">引导式解释</option></select><button type="button" onClick={onExplain}>让 AI 解释 →</button></div>}</article>)}</div>}{mode !== "text" && documentUrl && <iframe className="pdf-frame" src={documentUrl} title={`${detail.document.displayName} 原始 PDF`} />}</div></>}</div></section>;
 }
 
 function TutorPanel({ tutor, followUp, practice, startingPractice, topicInput, onFollowUpChange, onSubmitFollowUp, onBeginPractice, onRetest, onPracticeQuestionChange, onTopicInputChange, onSubmitPracticeAnswer, onClosePractice, onCancel, onClose }: { tutor: TutorState; followUp: string; practice: PracticeState | null; startingPractice: boolean; topicInput: string; onFollowUpChange: (value: string) => void; onSubmitFollowUp: (event: React.FormEvent) => void; onBeginPractice: () => void; onRetest: () => void; onPracticeQuestionChange: (setter: (current: PracticeState | null) => PracticeState | null) => void; onTopicInputChange: (value: string) => void; onSubmitPracticeAnswer: () => void; onClosePractice: () => void; onCancel: () => void; onClose: () => void }) {
@@ -779,7 +868,7 @@ function RuntimeCard({ status, loading, action, onRefresh, onLogin, onLogout }: 
 }
 
 function UsageMeter({ limit }: { limit: RateLimits }) { const window = limit.primary ?? limit.secondary; if (!window) return null; const remaining = Math.max(0, Math.round(100 - window.usedPercent)); return <div className="usage-panel"><div className="usage-label"><span>当前用量窗口</span><strong>{remaining}% <small>可用</small></strong></div><div className="meter" aria-label={`剩余 ${remaining}%`}><span style={{ width: `${String(remaining)}%` }} /></div><div className="usage-meta"><span>{describeWindow(window)}</span><span>{formatReset(window)}</span></div></div>; }
-function KnowledgeOrbit() { return <div className="knowledge-orbit" aria-label="资料经过选择、解释和追问形成理解的示意图"><div className="orbit-ring ring-one" /><div className="orbit-ring ring-two" /><span className="orbit-node node-a">资料</span><span className="orbit-node node-b">选择</span><span className="orbit-node node-c">解释</span><span className="orbit-node node-d">追问</span><div className="orbit-core"><strong>理解</strong><small>MASTERY</small></div></div>; }
+function KnowledgeOrbit() { return <div className="knowledge-orbit" aria-label="资料经过分析、知识地图和针对性练习形成理解的示意图"><div className="orbit-ring ring-one" /><div className="orbit-ring ring-two" /><span className="orbit-node node-a">资料</span><span className="orbit-node node-b">分析</span><span className="orbit-node node-c">地图</span><span className="orbit-node node-d">练习</span><div className="orbit-core"><strong>理解</strong><small>MASTERY</small></div></div>; }
 function DocumentIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5M9 12h6M9 16h6"/></svg>; }
 function NavIcon({ name }: { name: string }) { const paths: Record<string, React.ReactNode> = { home: <><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9v11h13V9M9 20v-6h6v6"/></>, library: <><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2V4Z"/><path d="M7 16h12M9 8h6"/></>, map: <><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15M15 6v15"/></>, practice: <><path d="M5 3h14v18H5z"/><path d="m8 9 2 2 4-4M8 16h8"/></>, review: <><path d="M12 5a7 7 0 1 1-6.2 3.75"/><path d="M3 4v5h5M12 8v5l3 2"/></> }; return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>; }
 function RefreshIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M19 12a7 7 0 1 0-2.05 4.95"/></svg>; }
@@ -791,4 +880,97 @@ function formatDate(value: string): string { return new Intl.DateTimeFormat("zh-
 function formatBytes(bytes: number): string { return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${String(Math.ceil(bytes / 1024))} KB`; }
 function describeWindow(window: RateWindow): string { if (!window.windowDurationMins) return "Codex 用量"; const hours = window.windowDurationMins / 60; return Number.isInteger(hours) ? `${String(hours)} 小时窗口` : `${String(window.windowDurationMins)} 分钟窗口`; }
 function formatReset(window: RateWindow): string { if (!window.resetsAt) return "重置时间未知"; return `${new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(new Date(window.resetsAt))} 重置`; }
+
+function MapView({ courses, selectedCourseId, selectedCourse, concepts, result, progress, analyzing, analyzeDisabled, knowledgeLoading, onSelectCourse, onAnalyze, onOpenSource, onGoHome, onCreateCourse }: { courses: Course[]; selectedCourseId: string | null; selectedCourse: Course | null; concepts: KnowledgeConcept[]; result: KnowledgeExtractionResult | null; progress: KnowledgeExtractionProgress | null; analyzing: boolean; analyzeDisabled: boolean; knowledgeLoading: boolean; onSelectCourse: (courseId: string) => void; onAnalyze: () => void; onOpenSource: (documentId: string, pageNumber: number) => void; onGoHome: () => void; onCreateCourse: () => void }) {
+  return <section className="map-workspace">
+    <aside className="map-rail">
+      <div className="rail-section">
+        <div className="rail-heading"><span>课程</span><button type="button" onClick={onCreateCourse}>＋</button></div>
+        <select value={selectedCourseId ?? ""} onChange={(event) => onSelectCourse(event.target.value)}>{courses.length === 0 && <option value="">请先创建课程</option>}{courses.map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}</select>
+      </div>
+      <div className="rail-section map-rail-section">
+        <div className="rail-heading"><span>知识地图</span><small>{String(concepts.length)}</small></div>
+        <p className="map-rail-note">{analyzing ? "正在分析整门课程…" : concepts.length === 0 ? "尚未生成概念" : "点击概念来源可跳到 PDF 所在页"}</p>
+      </div>
+    </aside>
+    <div className="map-stage">
+      {!selectedCourse ? <EmptyReader title="先选择一门课程" text="知识地图针对单门课程生成。请在资料库导入 PDF 并选择课程。" action="回到学习台" onAction={onGoHome} /> : <>
+        <AnalysisPanel analyzing={analyzing} progress={progress} result={result} conceptCount={concepts.length} disabled={analyzeDisabled} onAnalyze={onAnalyze} />
+        {concepts.length > 0 ? <div className="concept-grid">{concepts.map((concept) => <ConceptCard concept={concept} key={concept.id} onOpenSource={onOpenSource} />)}</div> : knowledgeLoading ? <div className="map-waiting"><div className="thinking"><span /><p>正在读取本地知识地图……</p></div></div> : analyzing ? <div className="map-waiting"><div className="thinking"><span /><p>正在从课程资料中提取概念……</p></div></div> : <div className="map-empty"><div className="empty-reader-icon"><MapIcon /></div><h2>还没有知识概念</h2><p>导入课程 PDF 后，点击「分析全部资料」即可从整门课程中提取概念、别名、摘要与来源页码。分析之前，这里不会展示任何知识点。</p></div>}
+      </>}
+    </div>
+  </section>;
+}
+
+function ConceptCard({ concept, onOpenSource }: { concept: KnowledgeConcept; onOpenSource: (documentId: string, pageNumber: number) => void }) {
+  return <article className="concept-card">
+    <header><h3>{concept.title}</h3><span className="concept-sources-count">{String(concept.sources.length)} 处来源</span></header>
+    <p className="concept-summary">{concept.summary}</p>
+    {concept.aliases.length > 0 && <div className="concept-aliases"><span>别名</span>{concept.aliases.map((alias) => <code key={alias}>{alias}</code>)}</div>}
+    <div className="concept-sources"><span className="sources-label">来源证据</span>{concept.sources.map((source, index) => <button className="source-chip" type="button" key={`${String(source.documentId)}-${String(source.pageNumber)}-${String(index)}`} onClick={() => onOpenSource(source.documentId, source.pageNumber)}><span>{source.sourceLabel}</span><small>{source.excerpt ? `“${source.excerpt.slice(0, 56)}${source.excerpt.length > 56 ? "…" : ""}”` : `第 ${String(source.pageNumber)} 页`}</small></button>)}</div>
+  </article>;
+}
+
+function AnalysisPanel({ analyzing, progress, result, conceptCount, disabled, onAnalyze, compact }: { analyzing: boolean; progress: KnowledgeExtractionProgress | null; result: KnowledgeExtractionResult | null; conceptCount: number; disabled: boolean; onAnalyze: () => void; compact?: boolean }) {
+  const failed = progress?.phase === "failed";
+  if (compact) {
+    if (analyzing) {
+      const phase = progress?.phase ?? "queued";
+      return <div className="analysis-mini active" role="status"><span className="spinner-mini" /><span>{extractionPhaseLabel(phase)}{(progress?.total ?? 0) > 0 ? ` ${String(progress?.current ?? 0)}/${String(progress?.total ?? 0)}` : ""}</span></div>;
+    }
+    if (failed) {
+      return <div className="analysis-mini failed" role="alert"><span className="analysis-dot failed" /><span title={progress.message ?? undefined}>分析失败</span><button className="analysis-retry" disabled={disabled} onClick={onAnalyze} type="button">重试</button></div>;
+    }
+    if (result) {
+      return <div className="analysis-mini done" role="status"><span className="analysis-dot succeeded" /><span>已生成 {String(result.concepts.length)} 个概念 · 失败 {String(result.failedChunkCount)}</span><button className="analysis-retry" disabled={disabled} onClick={onAnalyze} type="button">重新分析</button></div>;
+    }
+    return <button className="analyze-button" disabled={disabled} onClick={onAnalyze} type="button">分析全部资料</button>;
+  }
+  if (analyzing) {
+    const phase = progress?.phase ?? "queued";
+    const current = progress?.current ?? 0;
+    const total = progress?.total ?? 0;
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    return <div className="analysis-panel active" role="status">
+      <div className="analysis-row"><span className={"analysis-dot " + phase} /><strong>正在分析全部资料…</strong><span className="phase-badge">{extractionPhaseLabel(phase)}</span></div>
+      <p className="analysis-message">{progress?.message ?? (phase === "chunking" ? "正在切分资料…" : phase === "merging" ? "正在合并概念…" : "")}</p>
+      {phase === "analyzing" && total > 0 && <div className="analysis-meter"><span style={{ width: `${String(percent)}%` }} /></div>}
+      <div className="analysis-meta"><span>{String(current)}/{String(total || 0)} 个片段</span><span>{String(percent)}%</span></div>
+    </div>;
+  }
+  if (failed) {
+    return <div className="analysis-panel failed" role="alert">
+      <div className="analysis-row"><span className="analysis-dot failed" /><strong>分析未完成</strong><span className="phase-badge">失败</span></div>
+      <p className="analysis-message">{progress.message ?? "模型没有返回可用的结构化结果，请检查模型连接后重试。"}</p>
+      <button className="analyze-button secondary" disabled={disabled} onClick={onAnalyze} type="button">重新分析 →</button>
+    </div>;
+  }
+  if (result) {
+    return <div className="analysis-panel done" role="status">
+      <div className="analysis-row"><span className="analysis-dot succeeded" /><strong>分析完成</strong><span className="phase-badge">{String(result.concepts.length)} 个概念</span></div>
+      <p className="analysis-message">已分析 {String(result.analyzedChunkCount)}/{String(result.chunkCount)} 个片段{result.failedChunkCount > 0 ? `，其中 ${String(result.failedChunkCount)} 个片段未能通过结构校验。` : "，全部片段均已通过校验。"}</p>
+      <button className="analyze-button secondary" disabled={disabled} onClick={onAnalyze} type="button">重新分析全部资料</button>
+    </div>;
+  }
+  return <div className="analysis-panel">
+    <p className="analysis-lead">把整门课程的 PDF 交给 AI，提取一篇带来源页码证据的知识地图。解释与练习仍可随时使用。</p>
+    <button className="analyze-button" disabled={disabled} onClick={onAnalyze} type="button">分析全部资料 →</button>
+    {conceptCount > 0 && <span className="analysis-hint">已生成 {String(conceptCount)} 个概念，可重新分析</span>}
+  </div>;
+}
+
+function MapIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15M15 6v15"/></svg>; }
+function extractionPhaseLabel(phase: KnowledgeExtractionPhase | null | undefined): string {
+  switch (phase) {
+    case "queued": return "排队";
+    case "chunking": return "切分资料";
+    case "analyzing": return "分析";
+    case "merging": return "合并概念";
+    case "succeeded": return "完成";
+    case "failed": return "失败";
+    case "cancelled": return "取消";
+    default: return "准备中";
+  }
+}
+
 function friendlyError(error: unknown): string { const raw = error instanceof Error ? error.message : String(error); return raw.replace(/^Error invoking remote method '[^']+': Error: /, ""); }
