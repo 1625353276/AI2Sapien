@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AttemptEvaluation,
+  AttemptSummary,
   ConceptMastery,
   Course,
   CourseDocument,
@@ -21,7 +22,7 @@ import type {
   RuntimeStatusSnapshot,
 } from "@ai2sapien/contracts";
 
-type View = "home" | "library";
+type View = "home" | "library" | "practice";
 type ReaderMode = "text" | "split" | "original";
 
 interface SelectedSource {
@@ -67,7 +68,7 @@ const navigation = [
   { id: "home", label: "学习台", icon: "home", enabled: true },
   { id: "library", label: "资料库", icon: "library", enabled: true },
   { id: "map", label: "知识地图", icon: "map", enabled: false },
-  { id: "practice", label: "练习与补救", icon: "practice", enabled: false },
+  { id: "practice", label: "练习与补救", icon: "practice", enabled: true },
   { id: "review", label: "复习队列", icon: "review", enabled: false },
 ] as const;
 
@@ -109,7 +110,40 @@ export function App() {
     anthropicModel: "claude-3-5-sonnet-latest",
   }));
   const [savingProvider, setSavingProvider] = useState(false);
+  const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
+  const [conceptAttempts, setConceptAttempts] = useState<AttemptSummary[]>([]);
+  const [practiceBusy, setPracticeBusy] = useState(false);
+  const practiceCourseRef = useRef<string | null>(null);
   const startingPractice = practice?.phase === "creating" || practice?.phase === "verifying";
+
+  const refreshMastery = useCallback(async (courseId: string) => {
+    try {
+      const next = await window.ai2sapien.listMastery(courseId);
+      setMasteryByCourse((current) => ({ ...current, [courseId]: next }));
+    } catch {
+      // keep previous data
+    }
+  }, []);
+
+  const refreshConceptAttempts = useCallback(async (conceptId: string | null) => {
+    if (!conceptId) {
+      setConceptAttempts([]);
+      return;
+    }
+    try {
+      setConceptAttempts(await window.ai2sapien.listConceptAttempts(conceptId));
+    } catch {
+      setConceptAttempts([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    practiceCourseRef.current = practice?.courseId ?? null;
+  }, [practice]);
+
+  useEffect(() => {
+    void refreshConceptAttempts(selectedConceptId);
+  }, [refreshConceptAttempts, selectedConceptId]);
 
   const refreshRuntime = useCallback(async (kind: "initial" | "refresh" = "refresh") => {
     if (kind === "refresh") setRuntimeAction("refresh");
@@ -210,6 +244,8 @@ export function App() {
           remediationStatus: result.remediation ? "done" : current.remediationStatus,
         }
         : current);
+      const courseId = practiceCourseRef.current;
+      if (courseId) void refreshMastery(courseId);
     });
     const removeProviderState = window.ai2sapien.onProviderStateChanged((state) => {
       setProviderState(state);
@@ -224,7 +260,7 @@ export function App() {
       removePracticeResult();
       removeProviderState();
     };
-  }, [refreshCourses, refreshRuntime]);
+  }, [refreshCourses, refreshMastery, refreshRuntime]);
 
   useEffect(() => {
     void window.ai2sapien.getProviderState().then((state) => {
@@ -463,6 +499,43 @@ export function App() {
   const closePractice = () => {
     setPractice(null);
     setTopicInput("");
+    void refreshConceptAttempts(selectedConceptId);
+  };
+
+  const beginConceptPractice = async (concept: ConceptMastery) => {
+    if (!concept.source) {
+      setNotice("该概念缺少来源上下文，请回到资料库重新划选文本。");
+      return;
+    }
+    setPracticeBusy(true);
+    setPractice({
+      practiceId: "",
+      courseId: selectedCourseId ?? "",
+      topic: concept.topic,
+      isRetest: concept.evidenceCount > 0,
+      phase: "creating",
+      phaseMessage: null,
+      question: null,
+      selectedOptionId: "",
+      reasoning: "",
+      evaluation: null,
+      remediationText: "",
+      remediationStatus: "idle",
+      remediationUnit: null,
+      mastery: null,
+      failure: null,
+    });
+    try {
+      const launch = await window.ai2sapien.startConceptPractice(concept.conceptId);
+      setPractice((current) => (current && current.practiceId.length === 0 && current.courseId === (selectedCourseId ?? "")
+        ? { ...current, practiceId: launch.practiceId }
+        : current));
+    } catch (error) {
+      setPractice(null);
+      setNotice(friendlyError(error));
+    } finally {
+      setPracticeBusy(false);
+    }
   };
 
   const saveProviderSettings = async () => {
@@ -492,6 +565,8 @@ export function App() {
   };
 
   const selectedCourse = courses.find((course) => course.id === selectedCourseId) ?? null;
+  const selectedConcept = (masteryByCourse[selectedCourseId ?? ""] ?? [])
+    .find((concept) => concept.conceptId === selectedConceptId) ?? null;
   const authenticated = status?.auth.authenticated ?? false;
   const plan = formatPlan(status?.auth.planType);
 
@@ -512,13 +587,15 @@ export function App() {
 
       <main className={view === "library" ? "library-main" : undefined}>
         <header className="topbar">
-          <div><p className="eyebrow">{view === "home" ? "LEARNING WORKSPACE" : "SOURCE-BASED LIBRARY"}</p><h1>{view === "home" ? "开始今天的理解之旅。" : selectedCourse?.title ?? "资料库"}</h1></div>
+          <div><p className="eyebrow">{view === "home" ? "LEARNING WORKSPACE" : view === "practice" ? "PRACTICE & REMEDIAL" : "SOURCE-BASED LIBRARY"}</p><h1>{view === "home" ? "开始今天的理解之旅。" : view === "practice" ? selectedCourse?.title ?? "练习与补救" : selectedCourse?.title ?? "资料库"}</h1></div>
           <div className="topbar-actions"><div className={`connection-pill ${authenticated ? "online" : "offline"}`}><span />{loadingStatus ? "正在连接" : authenticated ? `${plan} 已连接` : "尚未登录"}</div><button className="provider-button" type="button" onClick={() => setProviderModalOpen(true)}>模型 · {providerName(providerState?.active)}</button></div>
         </header>
         {notice && <div className="notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div>}
 
         {view === "home" ? (
           <HomeView action={runtimeAction} courses={courses} loading={loadingStatus || libraryLoading} masteryByCourse={masteryByCourse} onCreateCourse={() => setCreatingCourse(true)} onLogin={() => void login()} onLogout={() => void logout()} onOpenCourse={(courseId) => { setSelectedCourseId(courseId); setView("library"); }} onRefresh={() => void refreshRuntime()} status={status} />
+        ) : view === "practice" ? (
+          <PracticeView attempts={conceptAttempts} busy={practiceBusy || startingPractice} concepts={masteryByCourse[selectedCourseId ?? ""] ?? []} courseId={selectedCourseId} practice={practice} selectedConcept={selectedConcept} setPractice={setPractice} onClosePractice={closePractice} onGoHome={() => setView("home")} onRetest={() => void (selectedConcept && beginConceptPractice(selectedConcept))} onSelectConcept={(concept) => { setSelectedConceptId(concept.conceptId); void beginConceptPractice(concept); }} onSubmitAnswer={() => void submitPracticeAnswer()} />
         ) : (
           <LibraryView courses={courses} detail={documentDetail} documentLoading={documentLoading} documentUrl={documentUrl} documents={documents} importing={importing} importProgress={importProgress} mode={readerMode} onCaptureSelection={captureSelection} onCreateCourse={() => setCreatingCourse(true)} onImport={() => void importDocuments()} onModeChange={setReaderMode} onSelectCourse={setSelectedCourseId} onSelectDocument={setSelectedDocumentId} selectedCourseId={selectedCourseId} selectedDocumentId={selectedDocumentId} selectedSource={selectedSource} onExplain={() => void explainSelection()} explanationMode={explanationMode} onExplanationModeChange={setExplanationMode} />
         )}
@@ -566,6 +643,57 @@ export function App() {
       {tutor && <TutorPanel followUp={followUp} practice={practice} startingPractice={startingPractice} topicInput={topicInput} onBeginPractice={() => void beginPractice()} onRetest={() => void beginPractice(true)} onClosePractice={closePractice} onPracticeQuestionChange={setPractice} onTopicInputChange={setTopicInput} onSubmitPracticeAnswer={() => void submitPracticeAnswer()} onCancel={() => void window.ai2sapien.cancelExplanation(tutor.runId)} onClose={() => setTutor(null)} onFollowUpChange={setFollowUp} onSubmitFollowUp={submitFollowUp} tutor={tutor} />}
     </div>
   );
+}
+
+function PracticeView({ courseId, concepts, attempts, practice, busy, selectedConcept, setPractice, onSelectConcept, onRetest, onSubmitAnswer, onClosePractice, onGoHome }: { courseId: string | null; concepts: ConceptMastery[]; attempts: AttemptSummary[]; practice: PracticeState | null; busy: boolean; selectedConcept: ConceptMastery | null; setPractice: React.Dispatch<React.SetStateAction<PracticeState | null>>; onSelectConcept: (concept: ConceptMastery) => void; onRetest: () => void; onSubmitAnswer: () => void; onClosePractice: () => void; onGoHome: () => void }) {
+  return <section className="practice-workspace">
+    <aside className="practice-rail">
+      <div className="rail-section">
+        <div className="rail-heading"><span>概念</span><small>{String(concepts.length)}</small></div>
+        <div className="concept-list">
+          {concepts.length === 0 && <p className="empty-practice-note">还没有概念。先在资料库划选文本、完成一次解释与练习，概念会自动出现在这里。</p>}
+          {concepts.map((concept) => <button className={practice ? "disabled" : ""} disabled={busy && !practice} key={concept.conceptId} onClick={() => onSelectConcept(concept)} type="button">
+            <span className="concept-lv">Lv.{String(concept.level)}</span>
+            <span className="concept-meta"><strong>{concept.topic}</strong><small>{String(concept.evidenceCount)} 次练习{concept.source ? ` · ${concept.source.sourceLabel}` : ""}</small></span>
+          </button>)}
+        </div>
+      </div>
+    </aside>
+    <div className="practice-stage">
+      {!courseId ? <EmptyReader title="先选择一门课程" text="课程用于组织概念、练习与补救记录。" action="回到学习台" onAction={onGoHome} /> : practice ? (
+        <div className="practice-card">
+          <div className="practice-heading"><span>练习{practice.isRetest ? " · 复测" : ""}</span>{practice.phase !== "completed" && practice.phase !== "ready" && <span className="phase-badge">{practice.phaseMessage ?? phaseLabel(practice.phase)}</span>}</div>
+          {practice.phase === "failed" && practice.failure && <div className="tutor-error">{practice.failure}</div>}
+          {practice.question && (practice.phase === "ready" || practice.phase === "evaluating") && <>
+            <p className="question-stem">{practice.question.stem}</p>
+            <div className="quiz-options">{practice.question.options.map((option) => <label className={practice.selectedOptionId === option.id ? "selected" : ""} key={option.id}><input disabled={practice.phase === "evaluating"} name="quiz-option" type="radio" checked={practice.selectedOptionId === option.id} onChange={() => setPractice((current) => current ? { ...current, selectedOptionId: option.id } : current)} /><span className="option-label">{option.label}</span><span>{option.text}</span></label>)}</div>
+            <label className="reasoning-field">你为什么这样选？<textarea disabled={practice.phase === "evaluating"} maxLength={1500} placeholder="说明推理路径，AI 将独立评审对错。" value={practice.reasoning} onChange={(event) => setPractice((current) => current ? { ...current, reasoning: event.target.value } : current)} /></label>
+            {practice.phase === "evaluating" ? <p className="phase-line"><span className="spinner-mini" />{practice.phaseMessage ?? "正在评审推理…"}</p> : <button className="practice-submit" disabled={!practice.selectedOptionId} type="button" onClick={onSubmitAnswer}>提交作答 →</button>}
+          </>}
+          {practice.phase === "remediating" && <><ResultBanner practice={practice} /><div className="remediation-box" aria-live="polite">{practice.remediationText ? <p>{practice.remediationText}</p> : <div className="thinking"><span /><p>正在分析错误来源…</p></div>}</div></>}
+          {practice.phase === "completed" && <><ResultBanner practice={practice} /><div className="practice-actions">{practice.remediationUnit ? <button className="practice-submit" type="button" onClick={onRetest}>再来一道（复测）→</button> : <button className="practice-submit" type="button" onClick={onClosePractice}>完成 ✓</button>}<button className="practice-dismiss" type="button" onClick={onClosePractice}>收起练习</button></div></>}
+          {practice.question === null && practice.phase !== "failed" && <div className="thinking"><span /><p>{practice.phaseMessage ?? phaseLabel(practice.phase)}…</p></div>}
+        </div>
+      ) : (
+        <div className="concept-detail">
+          {selectedConcept ? <>
+            <div className="detail-head"><p className="eyebrow">CONCEPT</p><h3>{selectedConcept.topic}</h3><span className={`mastery-badge lv-${String(selectedConcept.level)}`}>掌握度 Lv.{String(selectedConcept.level)}</span></div>
+            <p className="detail-source">来源：{selectedConcept.source?.sourceLabel ?? "（无来源记录）"}</p>
+            {selectedConcept.source && <p className="detail-source">原文：…{selectedConcept.source.selectedText.slice(0, 140)}{selectedConcept.source.selectedText.length > 140 ? "…" : ""}</p>}
+            <button className="practice-submit" disabled={busy} type="button" onClick={() => onSelectConcept(selectedConcept)}>{selectedConcept.evidenceCount > 0 ? "再来一道（复测）→" : "开始练习 →"}</button>
+            <div className="attempt-history"><p className="eyebrow">ATTEMPT HISTORY</p>
+              {attempts.length === 0 ? <p className="empty-history">还没有作答记录。练习后会在这里看到答题、评审与补救摘要。</p> : attempts.map((attempt) => <div className={"attempt-row" + (attempt.correct && attempt.reasoningCorrect ? " passed" : " needs-work")} key={attempt.attemptId}>
+                <span>{attempt.isRetest ? "复测" : "首次"}</span>
+                <strong>{attempt.correct && attempt.reasoningCorrect ? "通过 ✓" : attempt.correct ? "结论对，推理不足" : "未通过"}</strong>
+                <small>{formatClock(attempt.occurredAt)} · {formatDate(attempt.occurredAt)}</small>
+                {attempt.remediationCause && <p>补救：{attempt.remediationCause}</p>}
+              </div>)}
+            </div>
+          </> : <EmptyReader title="选择一个概念" text="点左侧概念开始练习：系统会用该概念的原来源内容重新出题，并记录掌握度。" action="回学习台" onAction={onGoHome} />}
+        </div>
+      )}
+    </div>
+  </section>;
 }
 
 function HomeView({ status, loading, action, courses, masteryByCourse, onRefresh, onLogin, onLogout, onCreateCourse, onOpenCourse }: { status: RuntimeStatusSnapshot | null; loading: boolean; action: "login" | "logout" | "refresh" | null; courses: Course[]; masteryByCourse: Record<string, ConceptMastery[]>; onRefresh: () => void; onLogin: () => void; onLogout: () => void; onCreateCourse: () => void; onOpenCourse: (courseId: string) => void }) {

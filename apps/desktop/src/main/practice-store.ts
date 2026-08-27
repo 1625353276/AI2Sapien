@@ -3,11 +3,14 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
+  AttemptSummary,
   ConceptMastery,
+  ConceptSource,
   Id,
   IsoDateTime,
   MasteryLevel,
   Question,
+  SelectionContext,
 } from "@ai2sapien/contracts";
 import { asMasteryEvidence, deriveMasteryLevel } from "@ai2sapien/learning-core";
 
@@ -17,6 +20,11 @@ interface StoredConcept {
   topic: string;
   firstSourceRef: string;
   createdAt: IsoDateTime;
+  source: StoredConceptSource | null;
+}
+
+interface StoredConceptSource extends ConceptSource {
+  pageText: string;
 }
 
 export interface AttemptRecord {
@@ -66,20 +74,64 @@ export class PracticeStore {
     return this.#initialized;
   }
 
-  async recordConcept(courseId: string, topic: string, sourceRef: string): Promise<{ conceptId: string; isNew: boolean }> {
+  recordConcept(
+    courseId: string,
+    topic: string,
+    source: {
+      sourceLabel: string;
+      selection: SelectionContext;
+      pageText: string;
+    },
+  ): Promise<{ conceptId: string; isNew: boolean }> {
+    return this.recordConceptInternal(courseId, topic, {
+      sourceLabel: source.sourceLabel,
+      documentId: source.selection.documentId,
+      sourceVersion: source.selection.sourceVersion,
+      pageNumber: source.selection.pageNumber,
+      selectedText: source.selection.selectedText,
+      pageText: source.pageText,
+    });
+  }
+
+  private async recordConceptInternal(
+    courseId: string,
+    topic: string,
+    source: Omit<StoredConceptSource, "sourceLabel"> & { sourceLabel: string },
+  ): Promise<{ conceptId: string; isNew: boolean }> {
     await this.initialize();
     const normalizedTopic = normalizeTopic(topic);
     const existing = this.#database.concepts.find(
       (concept) => concept.courseId === courseId && normalizeTopic(concept.topic) === normalizedTopic,
     );
-    if (existing) return { conceptId: existing.id, isNew: false };
+    if (existing) {
+      const merged: StoredConceptSource = {
+        documentId: source.documentId,
+        sourceVersion: source.sourceVersion,
+        pageNumber: source.pageNumber,
+        selectedText: source.selectedText,
+        sourceLabel: source.sourceLabel,
+        pageText: source.pageText.slice(0, 16_000),
+      };
+      existing.source = merged;
+      existing.firstSourceRef = source.sourceLabel;
+      await this.#persist();
+      return { conceptId: existing.id, isNew: false };
+    }
 
     const concept: StoredConcept = {
       id: randomUUID(),
       courseId,
       topic: topic.trim(),
-      firstSourceRef: sourceRef,
+      firstSourceRef: source.sourceLabel,
       createdAt: new Date().toISOString(),
+      source: {
+        documentId: source.documentId,
+        sourceVersion: source.sourceVersion,
+        pageNumber: source.pageNumber,
+        selectedText: source.selectedText,
+        sourceLabel: source.sourceLabel,
+        pageText: source.pageText.slice(0, 16_000),
+      },
     };
     this.#database.concepts.push(concept);
     await this.#persist();
@@ -121,6 +173,21 @@ export class PracticeStore {
       .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
   }
 
+  async listConceptAttempts(conceptId: string): Promise<AttemptSummary[]> {
+    await this.initialize();
+    return this.#database.attempts
+      .filter((attempt) => attempt.conceptId === conceptId)
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      .map((attempt) => ({
+        attemptId: attempt.attemptId,
+        correct: attempt.correct,
+        reasoningCorrect: attempt.reasoningCorrect,
+        isRetest: attempt.isRetest,
+        occurredAt: attempt.occurredAt,
+        remediationCause: attempt.remediationCause,
+      }));
+  }
+
   async listConceptMastery(courseId: string): Promise<ConceptMastery[]> {
     await this.initialize();
     return this.#database.concepts
@@ -136,6 +203,17 @@ export class PracticeStore {
     );
     if (!concept) throw new Error("概念不存在。");
     return this.#conceptMastery(concept);
+  }
+
+  async getConceptContext(conceptId: string): Promise<{ courseId: string; topic: string; source: StoredConceptSource | null }> {
+    await this.initialize();
+    const concept = this.#database.concepts.find((candidate) => candidate.id === conceptId);
+    if (!concept) throw new Error("概念不存在。");
+    return {
+      courseId: concept.courseId,
+      topic: concept.topic,
+      source: concept.source,
+    };
   }
 
   #conceptMastery(concept: StoredConcept): ConceptMastery {
@@ -159,6 +237,15 @@ export class PracticeStore {
       level,
       evidenceCount: attempts.length,
       lastAttemptAt: attempts.length > 0 ? attempts.at(-1)?.occurredAt ?? null : null,
+      source: concept.source
+        ? {
+          documentId: concept.source.documentId,
+          sourceVersion: concept.source.sourceVersion,
+          pageNumber: concept.source.pageNumber,
+          selectedText: concept.source.selectedText,
+          sourceLabel: concept.source.sourceLabel,
+        }
+        : null,
     };
   }
 

@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron") as typeof import("ele
 import type {
   AttemptEvaluation,
   AttemptSubmission,
+  AttemptSummary,
   ChatGptLoginLaunch,
   ConceptMastery,
   Course,
@@ -51,8 +52,10 @@ interface AI2SapienDesktopApi {
   cancelExplanation(runId: string): Promise<void>;
   onExplanationUpdate(listener: (update: ExplanationUpdate) => void): () => void;
   startPractice(request: PracticeRequest): Promise<{ practiceId: string }>;
+  startConceptPractice(conceptId: string): Promise<{ practiceId: string }>;
   submitAnswer(input: AttemptSubmission): Promise<AttemptEvaluation>;
   listMastery(courseId: string): Promise<ConceptMastery[]>;
+  listConceptAttempts(conceptId: string): Promise<AttemptSummary[]>;
   onPracticeEvent(listener: (update: PracticeUpdate) => void): () => void;
   onPracticeQuestion(listener: (ready: PracticeQuestionReady) => void): () => void;
   onPracticeRemediation(listener: (update: RemediationUpdate) => void): () => void;
@@ -97,8 +100,10 @@ const api: AI2SapienDesktopApi = {
     return () => ipcRenderer.removeListener("learning:explanation-update", handler);
   },
   startPractice: (request) => ipcRenderer.invoke("learning:start-practice", request),
+  startConceptPractice: (conceptId) => ipcRenderer.invoke("learning:start-concept-practice", conceptId),
   submitAnswer: (input) => ipcRenderer.invoke("learning:submit-answer", input),
   listMastery: (courseId) => ipcRenderer.invoke("learning:list-mastery", courseId),
+  listConceptAttempts: (conceptId) => ipcRenderer.invoke("learning:list-concept-attempts", conceptId),
   onPracticeEvent: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, update: PracticeUpdate): void => {
       listener(update);

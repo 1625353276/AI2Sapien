@@ -306,12 +306,30 @@ export interface RemediationUnit {
 
 export type MasteryLevel = 0 | 1 | 2 | 3 | 4 | 5;
 
+export interface ConceptSource {
+  documentId: Id;
+  sourceVersion: string;
+  pageNumber: number;
+  selectedText: string;
+  sourceLabel: string;
+}
+
 export interface ConceptMastery {
   conceptId: Id;
   topic: string;
   level: MasteryLevel;
   evidenceCount: number;
   lastAttemptAt: IsoDateTime | null;
+  source: ConceptSource | null;
+}
+
+export interface AttemptSummary {
+  attemptId: Id;
+  correct: boolean;
+  reasoningCorrect: boolean;
+  isRetest: boolean;
+  occurredAt: IsoDateTime;
+  remediationCause: string | null;
 }
 
 export interface PracticeResult {

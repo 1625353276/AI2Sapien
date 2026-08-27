@@ -193,6 +193,15 @@ export async function runPracticeLoopSmoke(artifacts: SmokeArtifacts): Promise<S
   const wrongResult = results[0];
   if (!result || !wrongResult) throw new Error("missing practice results");
 
+  const mastery = await store.listConceptMastery("course-1");
+  const concept = mastery[0];
+  if (!concept) throw new Error("concept missing from store");
+  if (!concept.source) throw new Error("concept source missing from store");
+  const summaries = await store.listConceptAttempts(concept.conceptId);
+  if (summaries.length !== 2) throw new Error("attempt summaries mismatch");
+  const context = await store.getConceptContext(concept.conceptId);
+  if (!context.source || context.source.pageText.length < 10) throw new Error("stored source context missing");
+
   return {
     pass: evaluation.correct === false
       && evaluation.remediationRequired === true

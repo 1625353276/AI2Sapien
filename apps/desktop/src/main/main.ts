@@ -165,6 +165,34 @@ function registerIpc(): void {
   });
   ipcMain.handle("learning:submit-answer", (_event, input: AttemptSubmission) => requirePractice().submitAnswer(input));
   ipcMain.handle("learning:list-mastery", (_event, courseId: string) => requirePracticeStore().listConceptMastery(courseId));
+  ipcMain.handle("learning:list-concept-attempts", (_event, conceptId: string) => requirePracticeStore().listConceptAttempts(conceptId));
+  ipcMain.handle("learning:start-concept-practice", async (_event, conceptId: string) => {
+    const context = await requirePracticeStore().getConceptContext(conceptId);
+    if (!context.source) {
+      throw new Error("该概念没有可用的来源上下文，请回到资料库重新划选文本。");
+    }
+    const { documentId, sourceVersion, pageNumber, selectedText, sourceLabel, pageText } = context.source;
+    const attempts = await requirePracticeStore().listConceptAttempts(conceptId);
+    const practiceId = await requirePractice().startPractice(
+      {
+        courseId: context.courseId,
+        selection: {
+          documentId,
+          sourceVersion,
+          pageNumber,
+          selectedText,
+          prefix: "",
+          suffix: "",
+        },
+        topic: context.topic,
+        language: "zh-CN",
+        isRetest: attempts.length > 0,
+      },
+      pageText,
+      sourceLabel,
+    );
+    return { practiceId };
+  });
   ipcMain.handle("provider:get-state", () => currentProviderState());
   ipcMain.handle("provider:save-settings", async (_event, input: ProviderSettingsSave) => {
     const saved = await requireProviders().save(input);

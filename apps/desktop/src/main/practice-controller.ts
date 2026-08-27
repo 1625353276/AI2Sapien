@@ -86,7 +86,11 @@ export class PracticeController {
   async startPractice(request: PracticeRequest, sourceText: string, sourceLabel: string): Promise<string> {
     const practiceId = randomUUID();
     const topic = request.topic.trim().slice(0, 120) || "本段内容";
-    const { conceptId } = await this.#store.recordConcept(request.courseId, topic, sourceLabel);
+    const { conceptId } = await this.#store.recordConcept(request.courseId, topic, {
+      sourceLabel,
+      selection: request.selection,
+      pageText: sourceText,
+    });
     const system = practiceInstructions();
     const sessionId = await this.#modelRuntime.createSession(system);
 

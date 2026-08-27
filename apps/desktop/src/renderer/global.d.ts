@@ -1,6 +1,7 @@
 import type {
   AttemptEvaluation,
   AttemptSubmission,
+  AttemptSummary,
   ChatGptLoginLaunch,
   ConceptMastery,
   Course,
@@ -49,8 +50,10 @@ interface AI2SapienDesktopApi {
   cancelExplanation(runId: string): Promise<void>;
   onExplanationUpdate(listener: (update: ExplanationUpdate) => void): () => void;
   startPractice(request: PracticeRequest): Promise<{ practiceId: string }>;
+  startConceptPractice(conceptId: string): Promise<{ practiceId: string }>;
   submitAnswer(input: AttemptSubmission): Promise<AttemptEvaluation>;
   listMastery(courseId: string): Promise<ConceptMastery[]>;
+  listConceptAttempts(conceptId: string): Promise<AttemptSummary[]>;
   onPracticeEvent(listener: (update: PracticeUpdate) => void): () => void;
   onPracticeQuestion(listener: (ready: PracticeQuestionReady) => void): () => void;
   onPracticeRemediation(listener: (update: RemediationUpdate) => void): () => void;
