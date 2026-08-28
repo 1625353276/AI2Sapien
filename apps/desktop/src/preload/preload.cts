@@ -17,6 +17,7 @@ import type {
   ExplanationFollowUp,
   ExplanationRequest,
   ExplanationUpdate,
+  KnowledgeAnalysisState,
   KnowledgeConcept,
   KnowledgeExtractionProgress,
   KnowledgeExtractionResult,
@@ -67,6 +68,8 @@ interface AI2SapienDesktopApi {
   saveProviderSettings(input: ProviderSettingsSave): Promise<ProviderState>;
   onProviderStateChanged(listener: (state: ProviderState) => void): () => void;
   startKnowledgeExtraction(courseId: string): Promise<{ extractionId: string }>;
+  cancelKnowledgeExtraction(courseId: string): Promise<{ cancelled: boolean }>;
+  getKnowledgeAnalysisState(courseId: string): Promise<KnowledgeAnalysisState>;
   listKnowledgeConcepts(courseId: string): Promise<KnowledgeConcept[]>;
   getKnowledgeResult(extractionId: string): Promise<KnowledgeExtractionResult | null>;
   onKnowledgeProgress(listener: (progress: KnowledgeExtractionProgress) => void): () => void;
@@ -150,6 +153,8 @@ const api: AI2SapienDesktopApi = {
     return () => ipcRenderer.removeListener("provider:state-changed", handler);
   },
   startKnowledgeExtraction: (courseId) => ipcRenderer.invoke("knowledge:start-analysis", courseId),
+  cancelKnowledgeExtraction: (courseId) => ipcRenderer.invoke("knowledge:cancel-analysis", courseId),
+  getKnowledgeAnalysisState: (courseId) => ipcRenderer.invoke("knowledge:get-analysis-state", courseId),
   listKnowledgeConcepts: (courseId) => ipcRenderer.invoke("knowledge:list-concepts", courseId),
   getKnowledgeResult: (extractionId) => ipcRenderer.invoke("knowledge:get-result", extractionId),
   onKnowledgeProgress: (listener) => {

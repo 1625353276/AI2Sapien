@@ -273,6 +273,7 @@ main { grid-column: 2; min-width: 0; padding: 34px 42px 46px; }
 .analysis-panel.active { border-color: #c7d9cf; background: #edf5f0; }
 .analysis-panel.done { border-color: #bfdcc9; background: #e8f3ec; }
 .analysis-panel.failed { border-color: #eccfbe; background: #fff2ee; }
+.analysis-panel.paused { border-color: #d8dcd2; background: #f2f6f1; }
 .analysis-row { display: flex; align-items: center; gap: 9px; }
 .analysis-row strong { font-size: 12px; }
 .analysis-row .phase-badge { margin-left: auto; }
@@ -295,6 +296,10 @@ main { grid-column: 2; min-width: 0; padding: 34px 42px 46px; }
 .analysis-mini.active { border-color: #c7d9cf; background: #edf5f0; }
 .analysis-mini.done { border-color: #bfdcc9; background: #e8f3ec; }
 .analysis-mini.failed { border-color: #eccfbe; background: #fff2ee; color: #9a5648; }
+.analysis-mini.paused { border-color: #d8dcd2; background: #f2f6f1; }
+.analysis-mini.ready { flex-wrap: wrap; }
+.analysis-mini.ready .analysis-dot { flex: 0 0 auto; }
+.analysis-resume-note { flex: 1 1 auto; min-width: 0; color: #3c6c57; }
 .analysis-mini .spinner-mini { width: 12px; height: 12px; }
 .analysis-retry { margin-left: auto; padding: 4px 7px; border: 1px solid #cbd8d0; border-radius: 7px; background: white; color: var(--green); font-size: 8px; cursor: pointer; }
 .analysis-retry:disabled { opacity: .5; cursor: not-allowed; }

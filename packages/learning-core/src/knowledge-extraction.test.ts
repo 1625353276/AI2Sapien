@@ -1,176 +1,190 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { KnowledgeConcept, KnowledgeExtractionResult } from "@ai2sapien/contracts";
+import type { KnowledgeConcept } from "@ai2sapien/contracts";
 
 import {
-  MAX_CHUNK_CHARS,
-  splitSourceIntoChunks,
+  BATCH_OVERLAP_CHARS,
+  MAX_BATCH_CHARS,
+  MAX_CONCEPTS_PER_BATCH,
+  buildBatches,
   normalizeConceptTitle,
   parseMaterialAnalysis,
-  mergeMaterialConcepts,
+  rebuildConceptMap,
+  type ConceptOccurrence,
+  type MaterialBatch,
   type MaterialDocument,
   type MaterialPage,
-  type SourceChunk,
 } from "./knowledge-extraction.js";
-import {
-  KnowledgeExtractionEngine,
-  collectTurnReply,
-  type KnowledgeExtractionStorePort,
-  type MaterialAnalystPort,
-  type ModelStreamEvent,
-} from "./knowledge-engine.js";
 
 const documents: MaterialDocument[] = [
   { documentId: "doc-1", sourceVersion: "v1", displayName: "课程.pdf" },
   { documentId: "doc-2", sourceVersion: "v2", displayName: "讲义.pdf" },
 ];
 
-function page(documentId: string, pageNumber: number, text: string): MaterialPage {
-  const version = documentId === "doc-1" ? "v1" : "v2";
+function page(documentId: string, pageNumber: number, text: string, sourceVersion?: string): MaterialPage {
+  const version = sourceVersion ?? (documentId === "doc-1" ? "v1" : "v2");
   return { documentId, sourceVersion: version, pageNumber, text };
 }
 
-/**
- * In-memory fake of a provider-neutral ModelRuntime with no network calls.
- * It replays queued replies for each turn and settles the terminal event that
- * `collectTurnReply` waits on.
- */
-class FakeModelRuntime implements MaterialAnalystPort {
-  readonly listeners = new Set<(event: ModelStreamEvent) => void>();
-  readonly replies: string[] = [];
-  readonly failMessages: string[] = [];
-  sessionCount = 0;
-  readSystem: string[] = [];
-
-  onTurnEvent(listener: (event: ModelStreamEvent) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  async createSession(system: string): Promise<string> {
-    this.readSystem.push(system);
-    const sessionId = `session-${String(this.sessionCount)}`;
-    this.sessionCount += 1;
-    return sessionId;
-  }
-
-  async sendTurn(
-    sessionId: string,
-    _request: { system: string; messages: Array<{ role: string; content: string }> },
-  ): Promise<string> {
-    const runId = `run-${String(this.sessionCount)}-${String(this.listeners.size)}`;
-    const reply = this.replies.shift() ?? "";
-    const failure = this.failMessages.shift() ?? null;
-    this.#emit({ sessionId, runId, status: "running", delta: reply, message: null });
-    if (failure !== null) {
-      this.#emit({ sessionId, runId, status: "failed", delta: "", message: failure });
-    } else {
-      this.#emit({ sessionId, runId, status: "succeeded", delta: "", message: null });
-    }
-    return runId;
-  }
-
-  async interrupt(): Promise<void> {}
-
-  #emit(event: ModelStreamEvent): void {
-    for (const listener of this.listeners) listener(event);
-  }
+function batch(
+  overrides: Partial<MaterialBatch> & { documentId: string; sourceVersion: string; pageNumbers: number[]; pages: { pageNumber: number; text: string }[] },
+): MaterialBatch {
+  const first = overrides.pageNumbers[0]!;
+  const last = overrides.pageNumbers[overrides.pageNumbers.length - 1]!;
+  const range = overrides.pageNumbers.length === 1 ? `第 ${String(first)} 页` : `第 ${String(first)}–${String(last)} 页`;
+  const displayName = overrides.displayName ?? "课程.pdf";
+  const documentId = overrides.documentId;
+  const sourceVersion = overrides.sourceVersion;
+  const pages = overrides.pages;
+  const text = pages.map((entry) => `【第 ${String(entry.pageNumber)} 页】\n${entry.text}`).join("\n\n");
+  return {
+    batchId: overrides.batchId ?? `${documentId}-${sourceVersion}-${pageNumbersKey(pages)}`,
+    sourceLabel: overrides.sourceLabel ?? `${displayName} · ${range}`,
+    displayName,
+    text,
+    order: overrides.order ?? 0,
+    oversized: overrides.oversized ?? false,
+    documentId,
+    sourceVersion,
+    pageNumbers: overrides.pageNumbers,
+    pages,
+  };
 }
 
-class MemoryStore implements KnowledgeExtractionStorePort {
-  concepts = new Map<string, KnowledgeConcept[]>();
-  results = new Map<string, KnowledgeExtractionResult>();
-
-  async listConcepts(courseId: string): Promise<KnowledgeConcept[]> {
-    return structuredClone(this.concepts.get(courseId) ?? []);
-  }
-
-  async saveConcepts(courseId: string, concepts: KnowledgeConcept[]): Promise<void> {
-    this.concepts.set(courseId, structuredClone(concepts));
-  }
-
-  async saveResult(result: KnowledgeExtractionResult): Promise<void> {
-    this.results.set(result.extractionId, structuredClone(result));
-  }
-
-  async getResult(extractionId: string): Promise<KnowledgeExtractionResult | null> {
-    return structuredClone(this.results.get(extractionId) ?? null);
-  }
+function pageNumbersKey(pages: { pageNumber: number }[]): string {
+  return pages.map((page) => page.pageNumber).join(".");
 }
 
-const clock = { now: () => new Date("2026-08-28T00:00:00Z") };
-let idCounter = 0;
-const idPort = { next: (prefix: string) => `${prefix}-${String((idCounter += 1))}` };
-
-describe("splitSourceIntoChunks", () => {
-  it("keeps a short page as a single bounded chunk", () => {
-    const chunks = splitSourceIntoChunks(documents, [page("doc-1", 1, "短文本")]);
-    assert.equal(chunks.length, 1);
-    assert.equal(chunks[0]!.text, "短文本");
-    assert.equal(chunks[0]!.sourceLabel, "课程.pdf · 第 1 页");
-    assert.ok(chunks[0]!.text.length <= MAX_CHUNK_CHARS);
-  });
-
-  it("windows oversized pages into overlapping bounded chunks", () => {
-    const longText = Array.from({ length: 600 }, (_, index) => `词${String(index).padStart(3, "0")}`).join(" ");
-    const chunks = splitSourceIntoChunks(documents, [page("doc-1", 2, longText)]);
-    assert.ok(chunks.length > 1);
-    for (const chunk of chunks) {
-      assert.ok(chunk.text.length <= MAX_CHUNK_CHARS, "chunk must stay within budget");
-      assert.equal(chunk.documentId, "doc-1");
-      assert.equal(chunk.sourceVersion, "v1");
-      assert.equal(chunk.pageNumber, 2);
+describe("buildBatches", () => {
+  it("packs many short pages into far fewer document-aware batches", () => {
+    const pages = Array.from({ length: 75 }, (_, index) => page("doc-1", index + 1, "词".repeat(400)));
+    const batches = buildBatches(documents, pages);
+    assert.ok(batches.length < 10, `expected few batches but got ${batches.length}`);
+    assert.ok(batches.length < pages.length, "batching must reduce call count");
+    for (const item of batches) {
+      assert.equal(item.documentId, "doc-1");
+      assert.ok(item.text.length <= MAX_BATCH_CHARS, "every batch must stay within the hard budget");
     }
   });
 
-  it("labels chunks from the owning document and orders them deterministically", () => {
-    const chunks = splitSourceIntoChunks(documents, [
-      page("doc-2", 1, "第二份材料"),
-      page("doc-1", 1, "第一份材料"),
-    ]);
-    assert.equal(chunks.length, 2);
-    assert.equal(chunks[0]!.sourceLabel, "课程.pdf · 第 1 页");
-    assert.equal(chunks[1]!.sourceLabel, "讲义.pdf · 第 1 页");
-    assert.equal(chunks[0]!.order, 0);
-    assert.equal(chunks[1]!.order, 1);
+  it("never mixes pages across documents", () => {
+    const pages = [
+      ...Array.from({ length: 30 }, (_, index) => page("doc-1", index + 1, "甲".repeat(800))),
+      ...Array.from({ length: 30 }, (_, index) => page("doc-2", index + 1, "乙".repeat(800))),
+    ];
+    const batches = buildBatches(documents, pages);
+    for (const item of batches) {
+      assert.ok(item.pageNumbers.length > 0);
+    }
+    const docOne = batches.filter((item) => item.documentId === "doc-1");
+    const docTwo = batches.filter((item) => item.documentId === "doc-2");
+    assert.ok(docOne.length > 0);
+    assert.ok(docTwo.length > 0);
+    for (const item of docOne) assert.equal(item.documentId, "doc-1");
+    for (const item of docTwo) assert.equal(item.documentId, "doc-2");
   });
 
-  it("skips pages with no extractable text", () => {
-    const chunks = splitSourceIntoChunks(documents, [page("doc-1", 1, "  "), page("doc-1", 2, "正文")]);
-    assert.equal(chunks.length, 1);
-    assert.equal(chunks[0]!.pageNumber, 2);
+  it("windows an oversized single page into bounded overlapping batches referencing that page", () => {
+    const longText = "字".repeat(60_000);
+    const batches = buildBatches(documents, [page("doc-1", 3, longText)]);
+    assert.ok(batches.length > 1, "an oversized page must split into multiple batches");
+    for (const item of batches) {
+      assert.equal(item.documentId, "doc-1");
+      assert.deepEqual(item.pageNumbers, [3]);
+      assert.equal(item.oversized, true);
+      assert.ok(item.text.length <= MAX_BATCH_CHARS, "windowed batches stay within the budget");
+    }
+    const covered = batches.map((item) => item.pages[0]!.text.length).reduce((sum, length) => sum + length, 0);
+    assert.ok(covered > longText.length, "windowed batch text must cover the page (with overlap)");
+  });
+
+  it("gives repeated oversized windows distinct deterministic batch ids", () => {
+    const repeated = "重复内容".repeat(20_000);
+    const first = buildBatches(documents, [page("doc-1", 3, repeated)]);
+    const second = buildBatches(documents, [page("doc-1", 3, repeated)]);
+    assert.equal(new Set(first.map((item) => item.batchId)).size, first.length);
+    assert.deepEqual(first.map((item) => item.batchId), second.map((item) => item.batchId));
+  });
+
+  it("ignores pages without extractable text", () => {
+    const batches = buildBatches(documents, [page("doc-1", 1, "   "), page("doc-1", 2, "正文")]);
+    assert.equal(batches.length, 1);
+    assert.deepEqual(batches[0]!.pageNumbers, [2]);
+  });
+
+  it("is deterministic across runs, and the overlap constant is bounded", () => {
+    const pages = Array.from({ length: 40 }, (_, index) => page("doc-1", index + 1, "确定".repeat(700)));
+    const first = buildBatches(documents, pages);
+    const second = buildBatches(documents, pages);
+    assert.deepEqual(first.map((item) => item.batchId), second.map((item) => item.batchId));
+    assert.ok(BATCH_OVERLAP_CHARS > 0 && BATCH_OVERLAP_CHARS < MAX_BATCH_CHARS);
   });
 });
 
-describe("parseMaterialAnalysis", () => {
-  it("accepts a well-formed concepts payload", () => {
-    const { concepts, errors } = parseMaterialAnalysis(
-      "分析如下：\n```json\n{\"concepts\":[{\"title\":\"纵坐标轴\",\"aliases\":[\"Y 轴\"],\"summary\":\"承载数值量级，表达尺度。\",\"evidenceRefs\":[\"第 3 页 第 2 段\"]}]}\n```\n",
+describe("parseMaterialAnalysis / validateConceptEvidence", () => {
+  const single = batch({
+    batchId: "b1",
+    documentId: "doc-1",
+    sourceVersion: "v1",
+    pageNumbers: [1, 2],
+    pages: [
+      { pageNumber: 1, text: "坐标轴用于表示数值刻度。" },
+      { pageNumber: 2, text: "图例解释图表中的符号含义。" },
+    ],
+    displayName: "课程.pdf",
+  });
+
+  it("retains only evidence whose page is in the batch and whose quote is present", () => {
+    const result = parseMaterialAnalysis(
+      `{"concepts":[{"title":"坐标轴","aliases":["y轴"],"summary":"数值量级刻度轴，用于表达尺度。",
+        "evidence":[{"pageNumber":1,"quote":"坐标轴用于表示数值刻度"},{"pageNumber":99,"quote":"不存在"},{"pageNumber":1,"quote":"完全不存在的引文"}]}]}`,
+      single,
     );
-    assert.equal(errors.length, 0);
-    assert.equal(parseMaterialAnalysis("not json").valid, false);
-    assert.equal(concepts.length, 1);
-    assert.equal(concepts[0]!.title, "纵坐标轴");
-    assert.deepEqual(concepts[0]!.aliases, ["Y 轴"]);
+    assert.equal(result.valid, true);
+    assert.equal(result.concepts.length, 1);
+    assert.deepEqual(result.concepts[0]!.evidence.map((entry) => entry.quote), ["坐标轴用于表示数值刻度"]);
   });
 
-  it("returns no concepts for malformed or non-JSON output", () => {
-    assert.equal(parseMaterialAnalysis("这不是 JSON").concepts.length, 0);
-    assert.equal(parseMaterialAnalysis("```json\n{broken\n```").concepts.length, 0);
-    assert.equal(parseMaterialAnalysis("```json\n{\"foo\":1}\n```").concepts.length, 0);
+  it("rejects a concept whose only evidence is on a wrong page", () => {
+    const result = parseMaterialAnalysis(
+      `{"concepts":[{"title":"幽灵概念","aliases":[],"summary":"这个概念的说明文字。","evidence":[{"pageNumber":99,"quote":"坐标轴"}]}]}`,
+      single,
+    );
+    assert.equal(result.valid, false);
+    assert.equal(result.concepts.length, 0);
+    assert.ok(result.errors.some((error) => error.includes("证据")));
   });
 
-  it("ignores invalid entries and caps output at the per-chunk limit", () => {
-    const many = Array.from({ length: 40 }, (_, index) => ({
+  it("rejects a concept whose quote does not appear in the claimed page", () => {
+    const result = parseMaterialAnalysis(
+      `{"concepts":[{"title":"伪造概念","aliases":[],"summary":"这个概念的说明文字。","evidence":[{"pageNumber":2,"quote":"完全不存在的引文内容"}]}]}`,
+      single,
+    );
+    assert.equal(result.valid, false);
+    assert.equal(result.concepts.length, 0);
+  });
+
+  it("accepts a well-formed concept spread across multiple pages", () => {
+    const result = parseMaterialAnalysis(
+      `{"concepts":[{"title":"坐标轴","aliases":["Y 轴"],"summary":"承载数值量级的刻度轴。","evidence":[{"pageNumber":1,"quote":"坐标轴用于表示数值刻度"},{"pageNumber":2,"quote":"图例解释图表中的符号含义"}]}]}`,
+      single,
+    );
+    assert.equal(result.concepts.length, 1);
+    assert.equal(result.concepts[0]!.evidence.length, 2);
+  });
+
+  it("returns no concepts for malformed output and caps the concept count", () => {
+    assert.equal(parseMaterialAnalysis("这不是 JSON", single).valid, false);
+    assert.equal(parseMaterialAnalysis("```json\n{broken\n```", single).concepts.length, 0);
+    const many = Array.from({ length: MAX_CONCEPTS_PER_BATCH + 10 }, (_, index) => ({
       title: `概念${String(index)}`,
       aliases: [],
-      summary: "含义与机制说明",
-      evidenceRefs: ["依据"],
-    })).concat([{ title: "", aliases: [], summary: "空的标题", evidenceRefs: [] }]);
-    const { concepts, errors } = parseMaterialAnalysis(`{"concepts":${JSON.stringify(many)}}`);
-    assert.ok(concepts.length <= 20);
-    assert.ok(errors.length > 0);
+      summary: "含义与机制说明。",
+      evidence: [{ pageNumber: 1, quote: "坐标轴" }],
+    }));
+    const { concepts } = parseMaterialAnalysis(`{"concepts":${JSON.stringify(many)}}`, single);
+    assert.ok(concepts.length <= MAX_CONCEPTS_PER_BATCH);
   });
 });
 
@@ -181,159 +195,68 @@ describe("normalizeConceptTitle", () => {
   });
 });
 
-describe("mergeMaterialConcepts", () => {
-  it("collapses duplicate titles while retaining every source excerpt", () => {
-    const chunkA: SourceChunk = {
-      chunkId: "c1", documentId: "doc-1", sourceVersion: "v1", pageNumber: 1, sourceLabel: "课程.pdf · 第 1 页", text: "来源甲", order: 0,
-    };
-    const chunkB: SourceChunk = {
-      chunkId: "c2", documentId: "doc-2", sourceVersion: "v2", pageNumber: 2, sourceLabel: "讲义.pdf · 第 2 页", text: "来源乙", order: 1,
-    };
-    const existing: KnowledgeConcept[] = [];
-    const merged = mergeMaterialConcepts("course-1", [
-      { draft: { title: "坐标轴", aliases: ["坐标轴"], summary: "第一种解释，相对较短的说明。", evidenceRefs: ["来源甲依据"], sourceChunkId: "c1" }, chunk: chunkA },
-      { draft: { title: " 坐标轴 ", aliases: ["轴系"], summary: "第二种解释，更长的一种说明方式以覆盖更多机制。", evidenceRefs: ["来源乙依据"], sourceChunkId: "c2" }, chunk: chunkB },
-    ], existing, idPort.next, () => clock.now().toISOString());
+describe("rebuildConceptMap", () => {
+  const clockNow = () => "2026-08-28T00:00:00.000Z";
+  let idCounter = 0;
+  const nextId = (prefix: string) => `${prefix}-${String((idCounter += 1))}`;
 
+  it("merges duplicate titles while preserving every document/page/quote source", () => {
+    const occurrences: ConceptOccurrence[] = [
+      {
+        draft: { title: "坐标轴", aliases: ["坐标轴"], summary: "第一种解释较短。", evidence: [{ pageNumber: 1, quote: "坐标轴用于表示数值刻度" }] },
+        documentId: "doc-1", sourceVersion: "v1", batchId: "b1", batchSourceLabel: "课程.pdf · 第 1 页", displayName: "课程.pdf", pageNumbers: [1],
+      },
+      {
+        draft: { title: " 坐标轴 ", aliases: ["轴系"], summary: "第二种解释，更长的一种说明方式以覆盖更多机制。", evidence: [{ pageNumber: 2, quote: "图例解释图表中的符号含义" }] },
+        documentId: "doc-2", sourceVersion: "v2", batchId: "b2", batchSourceLabel: "讲义.pdf · 第 2 页", displayName: "讲义.pdf", pageNumbers: [2],
+      },
+    ];
+    const merged = rebuildConceptMap("course-1", occurrences, [], nextId, clockNow);
     assert.equal(merged.length, 1);
     assert.equal(merged[0]!.title, "坐标轴");
     assert.deepEqual(merged[0]!.sources.map((source) => source.sourceLabel), ["课程.pdf · 第 1 页", "讲义.pdf · 第 2 页"]);
     assert.ok(merged[0]!.aliases.length >= 2);
     assert.ok(merged[0]!.evidenceRefs.length >= 2);
-    assert.deepEqual(merged[0]!.sources[0]!.evidenceRefs, ["来源甲依据"]);
-    assert.deepEqual(merged[0]!.sources[1]!.evidenceRefs, ["来源乙依据"]);
+    assert.equal(merged[0]!.sources[0]!.evidence?.length, 1);
+    assert.equal(merged[0]!.sources[0]!.evidence![0]!.quote, "坐标轴用于表示数值刻度");
   });
 
-  it("merges onto existing concepts so a re-run keeps prior sources", () => {
-    const chunkA: SourceChunk = {
-      chunkId: "c1", documentId: "doc-1", sourceVersion: "v1", pageNumber: 3, sourceLabel: "课程.pdf · 第 3 页", text: "历史来源", order: 0,
-    };
+  it("reuses stable ids for unchanged normalized titles", () => {
     const existing: KnowledgeConcept[] = [
       {
-        id: "concept-old", courseId: "course-1", title: "坐标轴", aliases: ["旧别称"], summary: "旧解释", sources: [
-          { documentId: "doc-0", sourceVersion: "v0", pageNumber: 5, sourceLabel: "旧.pdf · 第 5 页", excerpt: "旧来源", evidenceRefs: ["旧依据"] },
-        ], evidenceRefs: ["旧依据"], createdAt: "2026-08-27T00:00:00.000Z", updatedAt: "2026-08-27T00:00:00.000Z",
+        id: "concept-fixed", courseId: "course-1", title: "坐标轴", aliases: ["旧别称"], summary: "旧解释",
+        sources: [{ documentId: "doc-0", sourceVersion: "v0", pageNumber: 5, sourceLabel: "旧.pdf · 第 5 页", excerpt: "旧来源", evidenceRefs: ["旧依据"] }],
+        evidenceRefs: ["旧依据"], createdAt: "2026-08-27T00:00:00.000Z", updatedAt: "2026-08-27T00:00:00.000Z",
       },
     ];
-    const merged = mergeMaterialConcepts("course-1", [
-      { draft: { title: "坐标轴", aliases: ["新别称"], summary: "新解释更完整一些。", evidenceRefs: ["新依据"], sourceChunkId: "c1" }, chunk: chunkA },
-    ], existing, idPort.next, () => clock.now().toISOString());
-
-    assert.equal(merged.length, 1);
-    assert.equal(merged[0]!.id, "concept-old");
-    assert.equal(merged[0]!.sources.length, 2);
-    assert.ok(merged[0]!.evidenceRefs.includes("旧依据"));
-    assert.ok(merged[0]!.evidenceRefs.includes("新依据"));
-  });
-});
-
-describe("collectTurnReply", () => {
-  it("reassembles a streamed reply and settles on the terminal event", async () => {
-    const runtime = new FakeModelRuntime();
-    runtime.replies.push("{\"concepts\":[{\"title\":\"坐标轴\",\"summary\":\"含义与机制说明\",\"aliases\":[],\"evidenceRefs\":[\"第 1 段\"]}]}");
-    const text = await collectTurnReply(runtime, "session-0", "系统指令", "请分析。");
-    assert.ok(text.includes("坐标轴"));
-  });
-
-  it("ignores events from another model session", async () => {
-    const listeners = new Set<(event: ModelStreamEvent) => void>();
-    const runtime: MaterialAnalystPort = {
-      createSession: async () => "session-owned",
-      onTurnEvent(listener) {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
+    const occurrences: ConceptOccurrence[] = [
+      {
+        draft: { title: "坐标轴", aliases: ["新别称"], summary: "新解释更完整一些。", evidence: [{ pageNumber: 3, quote: "坐标轴用于表示数值刻度" }] },
+        documentId: "doc-1", sourceVersion: "v1", batchId: "b1", batchSourceLabel: "课程.pdf · 第 3 页", displayName: "课程.pdf", pageNumbers: [3],
       },
-      async sendTurn(sessionId) {
-        for (const listener of listeners) {
-          listener({ sessionId: "session-foreign", runId: "run-foreign", status: "running", delta: "foreign", message: null });
-          listener({ sessionId: "session-foreign", runId: "run-foreign", status: "succeeded", delta: "", message: null });
-          listener({ sessionId, runId: "run-owned", status: "running", delta: "owned", message: null });
-          listener({ sessionId, runId: "run-owned", status: "succeeded", delta: "", message: null });
-        }
-        return "run-owned";
+    ];
+    const merged = rebuildConceptMap("course-1", occurrences, existing, nextId, clockNow);
+    assert.equal(merged[0]!.id, "concept-fixed");
+    assert.deepEqual(merged[0]!.sources.map((source) => source.documentId), ["doc-1"]);
+    assert.ok(merged[0]!.evidenceRefs.includes("坐标轴用于表示数值刻度"));
+    assert.ok(!merged[0]!.sources.some((source) => source.documentId === "doc-0"), "removed-document source must be dropped");
+  });
+
+  it("drops concepts that no longer have any validated occurrence", () => {
+    const existing: KnowledgeConcept[] = [
+      {
+        id: "concept-gone", courseId: "course-1", title: "已删除概念", aliases: [], summary: "只存在于已删除文档。",
+        sources: [{ documentId: "doc-2", sourceVersion: "v2", pageNumber: 1, sourceLabel: "讲义.pdf · 第 1 页", excerpt: "旧", evidenceRefs: ["旧"] }],
+        evidenceRefs: ["旧"], createdAt: "2026-08-27T00:00:00.000Z", updatedAt: "2026-08-27T00:00:00.000Z",
       },
-    };
-    const text = await collectTurnReply(runtime, "session-owned", "系统指令", "请分析。");
-    assert.equal(text, "owned");
-  });
-
-  it("rejects when the run fails", async () => {
-    const runtime = new FakeModelRuntime();
-    runtime.replies.push("");
-    runtime.failMessages.push("模型中断");
-    await assert.rejects(
-      collectTurnReply(runtime, "session-0", "系统指令", "请分析。", 50),
-      /模型中断/,
-      "expected interruption to propagate",
-    );
-  });
-});
-
-describe("KnowledgeExtractionEngine", () => {
-  it("runs a chunked extraction with a fake runtime and persists merged concepts", async () => {
-    const runtime = new FakeModelRuntime();
-    runtime.replies.push(
-      "{\"concepts\":[{\"title\":\"坐标轴\",\"aliases\":[\"Y 轴\"],\"summary\":\"数值量级尺度。\",\"evidenceRefs\":[\"第 3 页 第 1 段\"]}]}",
-      "{\"concepts\":[{\"title\":\"坐标轴\",\"aliases\":[\"轴系\"],\"summary\":\"承载量级的数值刻度轴。\",\"evidenceRefs\":[\"第 4 页 第 2 段\"]},{\"title\":\"图例\",\"aliases\":[],\"summary\":\"说明图表中符号含义的辅助元素。\",\"evidenceRefs\":[\"第 4 页 第 3 段\"]}]}",
-    );
-
-    const store = new MemoryStore();
-    const engine = new KnowledgeExtractionEngine(runtime, store, clock, idPort);
-    const phases: string[] = [];
-    engine.onProgress((progress) => phases.push(progress.phase));
-
-    const pages = [
-      page("doc-1", 3, "坐标轴概念相关文本，足够长以便切分……".repeat(80)),
-      page("doc-1", 4, "坐标轴与图例的进一步说明。".repeat(90)),
     ];
-    const result = await engine.run({ courseId: "course-1", documents, pages }, "kex-1");
-
-    assert.equal(result.chunkCount > 0, true);
-    assert.equal(result.analyzedChunkCount > 0, true);
-    assert.equal(result.failedChunkCount, 0);
-    assert.ok(result.concepts.length >= 1);
-    assert.equal(result.concepts[0]!.courseId, "course-1");
-    assert.ok(phases.includes("analyzing"));
-    assert.ok(phases.includes("merging"));
-    assert.ok(phases.includes("succeeded"));
-    assert.equal(store.results.get("kex-1")?.concepts.length, result.concepts.length);
-
-    const persisted = await store.listConcepts("course-1");
-    const merged = persisted.find((concept) => normalizeConceptTitle(concept.title) === "坐标轴");
-    assert.ok(merged, "schema concept should exist");
-    assert.ok((merged!.sources.length ?? 0) >= 1);
-    assert.ok(runtime.readSystem.length === 1);
-    assert.ok(runtime.readSystem[0]!.length > 0);
-  });
-
-  it("continues past a failed chunk and reports a partial result", async () => {
-    const runtime = new FakeModelRuntime();
-    runtime.failMessages.push("网络错误");
-    runtime.replies.push(
-      "{\"concepts\":[]}",
-      "{\"concepts\":[{\"title\":\"图例\",\"aliases\":[],\"summary\":\"说明图表中符号含义的辅助元素。\",\"evidenceRefs\":[\"第 1 段\"]}]}",
-    );
-    const store = new MemoryStore();
-    const engine = new KnowledgeExtractionEngine(runtime, store, clock, idPort);
-    const pages = [
-      page("doc-1", 1, "第一段材料说明。"),
-      page("doc-1", 2, "第二段材料包含图例的定义。"),
+    const occurrences: ConceptOccurrence[] = [
+      {
+        draft: { title: "仍在概念", aliases: [], summary: "仍然存在的概念的说明。", evidence: [{ pageNumber: 1, quote: "坐标轴用于表示数值刻度" }] },
+        documentId: "doc-1", sourceVersion: "v1", batchId: "b1", batchSourceLabel: "课程.pdf · 第 1 页", displayName: "课程.pdf", pageNumbers: [1],
+      },
     ];
-    const result = await engine.run({ courseId: "course-1", documents, pages }, "kex-2");
-    assert.equal(result.failedChunkCount, 1);
-    assert.equal(result.analyzedChunkCount, 1);
-    assert.equal(result.concepts.length, 1);
-  });
-
-  it("fails the extraction when no chunk produces a structurally valid response", async () => {
-    const runtime = new FakeModelRuntime();
-    runtime.replies.push("not json");
-    const store = new MemoryStore();
-    const engine = new KnowledgeExtractionEngine(runtime, store, clock, idPort);
-    await assert.rejects(
-      engine.run({ courseId: "course-1", documents, pages: [page("doc-1", 1, "材料说明。")] }, "kex-3"),
-      /所有资料片段/,
-    );
-    assert.equal(store.results.has("kex-3"), false);
+    const merged = rebuildConceptMap("course-1", occurrences, existing, nextId, clockNow);
+    assert.deepEqual(merged.map((concept) => concept.title), ["仍在概念"]);
   });
 });

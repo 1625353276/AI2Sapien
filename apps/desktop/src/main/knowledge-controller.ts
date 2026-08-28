@@ -2,12 +2,16 @@ import { randomUUID } from "node:crypto";
 
 import type {
   Id,
+  KnowledgeAnalysisState,
   KnowledgeConcept,
   KnowledgeExtractionProgress,
   KnowledgeExtractionResult,
 } from "@ai2sapien/contracts";
 import {
+  ExtractionCancelledError,
   KnowledgeExtractionEngine,
+  buildBatches,
+  summarizeKnowledgeAnalysisState,
   type KnowledgeExtractionStorePort,
   type MaterialAnalystPort,
   type MaterialDocument,
@@ -28,6 +32,7 @@ export class KnowledgeController {
   readonly #progressListeners = new Set<ProgressListener>();
   readonly #completeListeners = new Set<CompleteListener>();
   readonly #activeCourses = new Set<Id>();
+  readonly #cancellators = new Map<Id, AbortController>();
 
   constructor(modelRuntime: ModelRuntime, library: LibraryStore, store: KnowledgeExtractionStorePort) {
     this.#modelRuntime = modelRuntime;
@@ -52,6 +57,8 @@ export class KnowledgeController {
     const material = await this.#readMaterial(courseId);
     const extractionId = randomUUID();
     this.#activeCourses.add(courseId);
+    const cancellator = new AbortController();
+    this.#cancellators.set(courseId, cancellator);
 
     const port: MaterialAnalystPort = this.#modelRuntime;
     const engine = new KnowledgeExtractionEngine(port, this.#store, { now: () => new Date() }, {
@@ -59,24 +66,44 @@ export class KnowledgeController {
     });
     engine.onProgress((progress) => this.#emitProgress(progress));
     engine
-      .run(material, extractionId)
+      .run(material, extractionId, cancellator.signal)
       .then((result) => this.#emitComplete(result))
       .catch((error: unknown) => {
-        this.#emitProgress({
-          courseId,
-          extractionId,
-          phase: "failed",
-          current: 0,
-          total: 0,
-          message: error instanceof Error ? error.message : String(error),
-          occurredAt: new Date().toISOString(),
-        });
+        if (error instanceof ExtractionCancelledError) {
+          this.#emitProgress({
+            courseId,
+            extractionId,
+            phase: "cancelled",
+            current: 0,
+            total: 0,
+            message: "知识提取已取消，已完成的部分会保留并可在下次开始时继续。",
+            occurredAt: new Date().toISOString(),
+          });
+        } else {
+          this.#emitProgress({
+            courseId,
+            extractionId,
+            phase: "failed",
+            current: 0,
+            total: 0,
+            message: error instanceof Error ? error.message : String(error),
+            occurredAt: new Date().toISOString(),
+          });
+        }
       })
       .finally(() => {
         this.#activeCourses.delete(courseId);
+        this.#cancellators.delete(courseId);
       });
 
     return { extractionId };
+  }
+
+  cancelExtraction(courseId: Id): void {
+    if (!this.#activeCourses.has(courseId)) {
+      throw new Error("该课程当前没有进行中的知识提取。");
+    }
+    this.#cancellators.get(courseId)?.abort();
   }
 
   listConcepts(courseId: Id): Promise<KnowledgeConcept[]> {
@@ -85,6 +112,13 @@ export class KnowledgeController {
 
   getResult(extractionId: Id): Promise<KnowledgeExtractionResult | null> {
     return this.#store.getResult(extractionId);
+  }
+
+  async getAnalysisState(courseId: Id): Promise<KnowledgeAnalysisState> {
+    const material = await this.#readMaterial(courseId);
+    const batches = buildBatches(material.documents, material.pages);
+    const checkpoints = await this.#store.listBatchCheckpoints(courseId);
+    return summarizeKnowledgeAnalysisState(courseId, batches, checkpoints);
   }
 
   async #readMaterial(courseId: Id): Promise<{ courseId: Id; documents: MaterialDocument[]; pages: MaterialPage[] }> {

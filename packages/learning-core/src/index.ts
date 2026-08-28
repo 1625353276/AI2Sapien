@@ -8,6 +8,7 @@ import type {
 
 export * from "./knowledge-extraction.js";
 export * from "./knowledge-engine.js";
+export * from "./knowledge-persistence.js";
 
 export type LoginFlow = "browser" | "device_code";
 

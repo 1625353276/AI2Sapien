@@ -209,6 +209,11 @@ function registerIpc(): void {
     return next;
   });
   ipcMain.handle("knowledge:start-analysis", (_event, courseId: string) => requireKnowledge().startExtraction(courseId));
+  ipcMain.handle("knowledge:cancel-analysis", (_event, courseId: string) => {
+    requireKnowledge().cancelExtraction(courseId);
+    return { cancelled: true };
+  });
+  ipcMain.handle("knowledge:get-analysis-state", (_event, courseId: string) => requireKnowledge().getAnalysisState(courseId));
   ipcMain.handle("knowledge:list-concepts", (_event, courseId: string) => requireKnowledge().listConcepts(courseId));
   ipcMain.handle("knowledge:get-result", (_event, extractionId: string) => requireKnowledge().getResult(extractionId));
 }

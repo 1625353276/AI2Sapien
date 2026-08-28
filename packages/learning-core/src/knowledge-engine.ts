@@ -1,6 +1,6 @@
 import type {
   Id,
-  IsoDateTime,
+  KnowledgeAnalysisState,
   KnowledgeConcept,
   KnowledgeExtractionProgress,
   KnowledgeExtractionResult,
@@ -8,12 +8,16 @@ import type {
 
 import type { ClockPort, IdPort } from "./index.js";
 import {
+  buildBatches,
   materialAnalystInstructions,
   materialAnalystPrompt,
-  mergeMaterialConcepts,
   parseMaterialAnalysis,
-  splitSourceIntoChunks,
-  type MaterialConceptDraft,
+  rebuildConceptMap,
+  validateConceptEvidence,
+  validateMaterialConcept,
+  type BatchCheckpoint,
+  type ConceptOccurrence,
+  type MaterialBatch,
   type MaterialDocument,
   type MaterialPage,
 } from "./knowledge-extraction.js";
@@ -45,10 +49,13 @@ export interface MaterialAnalystPort {
 }
 
 export interface KnowledgeExtractionStorePort {
-  listConcepts(courseId: string): Promise<KnowledgeConcept[]>;
-  saveConcepts(courseId: string, concepts: KnowledgeConcept[]): Promise<void>;
+  listConcepts(courseId: Id): Promise<KnowledgeConcept[]>;
+  saveConcepts(courseId: Id, concepts: KnowledgeConcept[]): Promise<void>;
   saveResult(result: KnowledgeExtractionResult): Promise<void>;
-  getResult(extractionId: string): Promise<KnowledgeExtractionResult | null>;
+  getResult(extractionId: Id): Promise<KnowledgeExtractionResult | null>;
+  listBatchCheckpoints(courseId: Id): Promise<BatchCheckpoint[]>;
+  saveBatchCheckpoint(checkpoint: BatchCheckpoint): Promise<void>;
+  pruneBatchCheckpoints(courseId: Id, retainedBatchIds: string[]): Promise<void>;
 }
 
 export interface KnowledgeExtractionInput {
@@ -59,8 +66,15 @@ export interface KnowledgeExtractionInput {
 
 export type KnowledgeProgressListener = (progress: KnowledgeExtractionProgress) => void;
 
-const TURN_TIMEOUT_MS = 300_000;
-const MAX_CHUNKS_PER_SESSION = 8;
+export const MAX_CONCURRENT_BATCHES = 3;
+export const BATCH_TURN_TIMEOUT_MS = 300_000;
+
+export class ExtractionCancelledError extends Error {
+  constructor() {
+    super("知识提取已取消。");
+    this.name = "ExtractionCancelledError";
+  }
+}
 
 export class KnowledgeExtractionEngine {
   readonly #port: MaterialAnalystPort;
@@ -81,81 +95,187 @@ export class KnowledgeExtractionEngine {
     return () => this.#progressListeners.delete(listener);
   }
 
-  async run(input: KnowledgeExtractionInput, extractionId: Id): Promise<KnowledgeExtractionResult> {
+  /**
+   * Analyze the whole course. Completed batches are reused from persisted
+   * checkpoints; only pending batches (failed, never settled, or belonging to a
+   * changed document) are sent to the model, with at most {@link MAX_CONCURRENT_BATCHES}
+   * requests in flight. Every settled batch is checkpointed immediately.
+   */
+  async run(
+    input: KnowledgeExtractionInput,
+    extractionId: Id,
+    signal?: AbortSignal,
+  ): Promise<KnowledgeExtractionResult> {
     const courseId = input.courseId;
     const startedAt = this.#clock.now().toISOString();
 
     this.#emitProgress(courseId, extractionId, "queued", 0, 0, null);
     this.#emitProgress(courseId, extractionId, "chunking", 0, 0, null);
-    const chunks = splitSourceIntoChunks(input.documents, input.pages);
-    this.#emitProgress(courseId, extractionId, "analyzing", 0, chunks.length, null);
 
-    if (chunks.length === 0) {
+    const batches = buildBatches(input.documents, input.pages);
+    const total = batches.length;
+    this.#emitProgress(courseId, extractionId, "analyzing", 0, total, null);
+
+    if (total === 0) {
       throw new Error("课程资料中没有可用于知识提取的嵌入文本。");
     }
 
-    const system = materialAnalystInstructions();
-    let sessionId: string | null = null;
-    let chunksInSession = 0;
+    const documentIds = new Set(input.documents.map((document) => document.documentId));
+    await this.#store.pruneBatchCheckpoints(courseId, batches.map((batch) => batch.batchId));
 
-    const drafts: MaterialConceptDraft[] = [];
-    let analyzedChunkCount = 0;
-    let failedChunkCount = 0;
+    const checkpoints = await this.#store.listBatchCheckpoints(courseId);
+    const batchById = new Map(batches.map((batch) => [batch.batchId, batch]));
+    const reusableByBatch = new Map<string, BatchCheckpoint>();
+    for (const checkpoint of checkpoints) {
+      if (checkpoint.status !== "succeeded") continue;
+      if (!documentIds.has(checkpoint.documentId)) continue;
+      const batch = batchById.get(checkpoint.batchId);
+      if (!batch) continue;
+      const validatedConcepts = validateCheckpointConcepts(checkpoint, batch);
+      if (!validatedConcepts) continue;
+      const reusableCheckpoint = { ...checkpoint, concepts: validatedConcepts };
+      const current = reusableByBatch.get(checkpoint.batchId);
+      if (!current || checkpoint.updatedAt > current.updatedAt) reusableByBatch.set(checkpoint.batchId, reusableCheckpoint);
+    }
 
-    for (const [index, chunk] of chunks.entries()) {
-      this.#emitProgress(courseId, extractionId, "analyzing", index + 1, chunks.length, chunk.sourceLabel);
-      try {
-        if (sessionId === null || chunksInSession >= MAX_CHUNKS_PER_SESSION) {
-          sessionId = await this.#port.createSession(system);
-          chunksInSession = 0;
-        }
-        const reply = await collectTurnReply(this.#port, sessionId, system, materialAnalystPrompt(chunk));
-        const parsed = parseMaterialAnalysis(reply);
-        if (!parsed.valid) throw new Error(parsed.errors.join("；"));
-        for (const draft of parsed.concepts) drafts.push({ ...draft, sourceChunkId: chunk.chunkId });
-        analyzedChunkCount += 1;
-        chunksInSession += 1;
-      } catch {
-        failedChunkCount += 1;
-        sessionId = null;
-        chunksInSession = 0;
+    const pending: MaterialBatch[] = [];
+    let reusedCount = 0;
+    for (const batch of batches) {
+      const reusable = reusableByBatch.get(batch.batchId);
+      if (reusable && reusable.documentId === batch.documentId && reusable.sourceVersion === batch.sourceVersion) {
+        reusedCount += 1;
+      } else {
+        pending.push(batch);
       }
     }
 
-    if (analyzedChunkCount === 0) {
-      throw new Error("所有资料片段均未能通过模型分析与结构校验。");
+    const system = materialAnalystInstructions();
+    let settledCount = reusedCount;
+    let failedCount = 0;
+
+    this.#emitProgress(courseId, extractionId, "analyzing", settledCount, total, reusedCount > 0 ? "正在复用已完成的资料批次。" : null);
+
+    let nextIndex = 0;
+    const work = async (): Promise<void> => {
+      while (true) {
+        if (signal?.aborted) throw new ExtractionCancelledError();
+        const position = nextIndex;
+        nextIndex += 1;
+        if (position >= pending.length) return;
+
+        const batch = pending[position]!;
+        try {
+          const sessionId = await this.#port.createSession(system);
+          const reply = await collectTurnReply(
+            this.#port,
+            sessionId,
+            system,
+            materialAnalystPrompt(batch),
+            BATCH_TURN_TIMEOUT_MS,
+            signal,
+          );
+          const parsed = parseMaterialAnalysis(reply, batch);
+          if (!parsed.valid) throw new Error(parsed.errors.join("；"));
+          await this.#store.saveBatchCheckpoint(checkpointFor(batch, input.courseId, "succeeded", parsed.concepts, null, this.#clock));
+        } catch (error) {
+          if (signal?.aborted) throw new ExtractionCancelledError();
+          failedCount += 1;
+          const message = error instanceof Error ? error.message : String(error);
+          await this.#store.saveBatchCheckpoint(checkpointFor(batch, input.courseId, "failed", [], message, this.#clock));
+        }
+        settledCount += 1;
+        this.#emitProgress(courseId, extractionId, "analyzing", settledCount, total, batch.sourceLabel);
+      }
+    };
+
+    const workerCount = Math.min(MAX_CONCURRENT_BATCHES, pending.length);
+    const workers = Array.from({ length: workerCount }, () => work());
+    const workerResults = await Promise.allSettled(workers);
+    const rejected = workerResults.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (rejected.some((result) => result.reason instanceof ExtractionCancelledError)) {
+      await this.#persistPartialMap(batches, input.courseId, input.documents);
+      throw new ExtractionCancelledError();
+    }
+    if (rejected.length > 0) {
+      throw rejected[0]!.reason;
     }
 
-    this.#emitProgress(courseId, extractionId, "merging", chunks.length, chunks.length, null);
-    const existing = await this.#store.listConcepts(courseId);
-    const chunkByIndex = new Map(chunks.map((chunk, index) => [chunk.chunkId, index]));
-    const inputs = drafts.map((draft) => {
-      const chunkIndex = chunkByIndex.get(draft.sourceChunkId) ?? 0;
-      return { draft, chunk: chunks[chunkIndex]! };
-    });
-    const concepts = mergeMaterialConcepts(
-      courseId,
-      inputs,
-      existing,
-      (prefix) => this.#ids.next(prefix),
-      () => this.#clock.now().toISOString(),
-    );
-    await this.#store.saveConcepts(courseId, concepts);
+    this.#emitProgress(courseId, extractionId, "merging", total, total, null);
+    const concepts = await this.#persistConceptMap(batches, input.courseId, input.documents);
 
     const result: KnowledgeExtractionResult = {
       extractionId,
       courseId,
       concepts,
-      chunkCount: chunks.length,
-      analyzedChunkCount,
-      failedChunkCount,
+      chunkCount: total,
+      analyzedChunkCount: total - failedCount,
+      failedChunkCount: failedCount,
+      reusedBatchCount: reusedCount,
       startedAt,
       completedAt: this.#clock.now().toISOString(),
     };
     await this.#store.saveResult(result);
 
-    this.#emitProgress(courseId, extractionId, "succeeded", chunks.length, chunks.length, null);
+    this.#emitProgress(courseId, extractionId, "succeeded", total, total, null);
     return result;
+  }
+
+  async #persistPartialMap(batches: readonly MaterialBatch[], courseId: Id, documents: readonly MaterialDocument[]): Promise<void> {
+    await this.#persistConceptMap(batches, courseId, documents);
+  }
+
+  async #persistConceptMap(
+    batches: readonly MaterialBatch[],
+    courseId: Id,
+    documents: readonly MaterialDocument[],
+  ): Promise<KnowledgeConcept[]> {
+    const occurrences = await this.#collectOccurrences(batches, courseId, documents);
+    const existing = await this.#store.listConcepts(courseId);
+    const concepts = rebuildConceptMap(
+      courseId,
+      occurrences,
+      existing,
+      (prefix) => this.#ids.next(prefix),
+      () => this.#clock.now().toISOString(),
+    );
+    await this.#store.saveConcepts(courseId, concepts);
+    return concepts;
+  }
+
+  async #collectOccurrences(
+    batches: readonly MaterialBatch[],
+    courseId: Id,
+    documents: readonly MaterialDocument[],
+  ): Promise<ConceptOccurrence[]> {
+    const displayNameByDocument = new Map(documents.map((document) => [document.documentId, document.displayName]));
+    const checkpoints = await this.#store.listBatchCheckpoints(courseId);
+    const byBatchId = new Map<string, BatchCheckpoint>();
+    for (const checkpoint of checkpoints) {
+      if (checkpoint.status !== "succeeded") continue;
+      const current = byBatchId.get(checkpoint.batchId);
+      if (!current || checkpoint.updatedAt > current.updatedAt) byBatchId.set(checkpoint.batchId, checkpoint);
+    }
+
+    const occurrences: ConceptOccurrence[] = [];
+    for (const batch of batches) {
+      const checkpoint = byBatchId.get(batch.batchId);
+      if (!checkpoint) continue;
+      const validatedConcepts = validateCheckpointConcepts(checkpoint, batch);
+      if (!validatedConcepts) continue;
+      const displayName = displayNameByDocument.get(batch.documentId) ?? checkpoint.displayName;
+      for (const draft of validatedConcepts) {
+        occurrences.push({
+          draft,
+          documentId: batch.documentId,
+          sourceVersion: batch.sourceVersion,
+          batchId: batch.batchId,
+          batchSourceLabel: batch.sourceLabel,
+          displayName,
+          pageNumbers: batch.pageNumbers,
+        });
+      }
+    }
+    return occurrences;
   }
 
   #emitProgress(
@@ -179,18 +299,106 @@ export class KnowledgeExtractionEngine {
   }
 }
 
+export function summarizeKnowledgeAnalysisState(
+  courseId: Id,
+  batches: readonly MaterialBatch[],
+  checkpoints: readonly BatchCheckpoint[],
+): KnowledgeAnalysisState {
+  const batchById = new Map(batches.map((batch) => [batch.batchId, batch]));
+  const latestByBatch = new Map<string, BatchCheckpoint>();
+  for (const checkpoint of checkpoints) {
+    if (checkpoint.courseId !== courseId || !batchById.has(checkpoint.batchId)) continue;
+    const current = latestByBatch.get(checkpoint.batchId);
+    if (!current || checkpoint.updatedAt > current.updatedAt) latestByBatch.set(checkpoint.batchId, checkpoint);
+  }
+
+  let completedBatchCount = 0;
+  let failedBatchCount = 0;
+  let updatedAt: string | null = null;
+  for (const [batchId, checkpoint] of latestByBatch) {
+    const batch = batchById.get(batchId)!;
+    if (checkpoint.status === "succeeded" && validateCheckpointConcepts(checkpoint, batch)) {
+      completedBatchCount += 1;
+    } else if (checkpoint.status === "failed") {
+      failedBatchCount += 1;
+    }
+    if (!updatedAt || checkpoint.updatedAt > updatedAt) updatedAt = checkpoint.updatedAt;
+  }
+
+  const pendingBatchCount = Math.max(0, batches.length - completedBatchCount);
+  return {
+    courseId,
+    totalBatchCount: batches.length,
+    completedBatchCount,
+    pendingBatchCount,
+    failedBatchCount,
+    canResume: pendingBatchCount > 0 && (completedBatchCount > 0 || failedBatchCount > 0),
+    updatedAt,
+  };
+}
+
+function validateCheckpointConcepts(
+  checkpoint: BatchCheckpoint,
+  batch: MaterialBatch,
+): BatchCheckpoint["concepts"] | null {
+  if (
+    checkpoint.documentId !== batch.documentId ||
+    checkpoint.sourceVersion !== batch.sourceVersion ||
+    !Array.isArray(checkpoint.concepts)
+  ) {
+    return null;
+  }
+
+  const concepts: BatchCheckpoint["concepts"] = [];
+  for (const stored of checkpoint.concepts) {
+    const structural = validateMaterialConcept(stored);
+    if (!structural) return null;
+    const supported = validateConceptEvidence(structural, batch);
+    if (!supported) return null;
+    concepts.push(supported);
+  }
+  return concepts;
+}
+
+function checkpointFor(
+  batch: MaterialBatch,
+  courseId: Id,
+  status: "succeeded" | "failed",
+  concepts: BatchCheckpoint["concepts"],
+  error: string | null,
+  clock: ClockPort,
+): BatchCheckpoint {
+  const now = clock.now().toISOString();
+  return {
+    courseId,
+    batchId: batch.batchId,
+    documentId: batch.documentId,
+    sourceVersion: batch.sourceVersion,
+    sourceLabel: batch.sourceLabel,
+    displayName: batch.displayName,
+    pageNumbers: batch.pageNumbers,
+    status,
+    concepts,
+    error,
+    startedAt: now,
+    updatedAt: now,
+  };
+}
+
 /**
  * Collect a full, non-streamed reply for a single turn. Buffers the streaming
  * deltas for the run and settles on the terminal event. Correct for both the
  * Codex provider (runId known before stream) and OpenAI-compatible provider
- * (events precede the resolved runId).
+ * (events precede the resolved runId). An optional abort signal rejects the
+ * promise immediately and causes the run to stop.
  */
 export function collectTurnReply(
   port: MaterialAnalystPort,
   sessionId: string,
   system: string,
   prompt: string,
-  timeoutMs: number = TURN_TIMEOUT_MS,
+  timeoutMs: number = BATCH_TURN_TIMEOUT_MS,
+  abortSignal?: AbortSignal,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let runId: string | null = null;
@@ -198,12 +406,25 @@ export function collectTurnReply(
     let settled = false;
     let unsubscribe: (() => void) | null = null;
 
-    const timeout = setTimeout(() => {
+    const fail = (error: Error): void => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeout);
       unsubscribe?.();
-      reject(new Error("材料分析超时。"));
-    }, timeoutMs);
+      if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
+      reject(error);
+    };
+
+    const timeout = setTimeout(() => fail(new Error("材料分析超时。")), timeoutMs);
+
+    const onAbort = (): void => fail(new ExtractionCancelledError());
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        fail(new ExtractionCancelledError());
+        return;
+      }
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+    }
 
     unsubscribe = port.onTurnEvent((event) => {
       if (settled) return;
@@ -215,17 +436,15 @@ export function collectTurnReply(
         return;
       }
       if (event.status === "succeeded") {
-        settled = true;
         clearTimeout(timeout);
         unsubscribe?.();
+        if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
+        settled = true;
         resolve(buffer);
         return;
       }
       if (event.status === "failed" || event.status === "interrupted") {
-        settled = true;
-        clearTimeout(timeout);
-        unsubscribe?.();
-        reject(new Error(event.message ?? "材料分析被中断。"));
+        fail(new Error(event.message ?? "材料分析被中断。"));
       }
     });
 
@@ -239,6 +458,7 @@ export function collectTurnReply(
         settled = true;
         clearTimeout(timeout);
         unsubscribe?.();
+        if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
         reject(error);
       });
   });

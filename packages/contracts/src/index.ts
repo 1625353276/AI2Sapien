@@ -381,12 +381,25 @@ export interface ProviderStatusView {
   detail: string | null;
 }
 
+/**
+ * A single validated quote of course material supporting a concept. `pageNumber`
+ * is the concrete source page and `quote` is a short excerpt that was verified to
+ * exist in that page's extracted text. The analyst may propose many evidence
+ * entries, but only those that pass schema + page + quote validation survive.
+ */
+export interface ConceptEvidence {
+  pageNumber: number;
+  quote: string;
+}
+
 export interface KnowledgeConceptSource {
   documentId: Id;
   sourceVersion: string;
   pageNumber: number;
   sourceLabel: string;
   excerpt: string;
+  /** Validated evidence (page + quote). Absent only for legacy v1 persisted concepts. */
+  evidence?: ConceptEvidence[];
   evidenceRefs: string[];
 }
 
@@ -421,13 +434,28 @@ export interface KnowledgeExtractionProgress {
   occurredAt: IsoDateTime;
 }
 
+export interface KnowledgeAnalysisState {
+  courseId: Id;
+  totalBatchCount: number;
+  completedBatchCount: number;
+  pendingBatchCount: number;
+  failedBatchCount: number;
+  canResume: boolean;
+  updatedAt: IsoDateTime | null;
+}
+
 export interface KnowledgeExtractionResult {
   extractionId: Id;
   courseId: Id;
   concepts: KnowledgeConcept[];
+  /** Total number of page batches for the course in this run. */
   chunkCount: number;
+  /** Batches whose concepts contributed this run (reused + newly analyzed successfully). */
   analyzedChunkCount: number;
+  /** Batches that settled as failed this run. */
   failedChunkCount: number;
+  /** Batches reused verbatim from a prior completed checkpoint. */
+  reusedBatchCount?: number;
   startedAt: IsoDateTime;
   completedAt: IsoDateTime;
 }

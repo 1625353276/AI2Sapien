@@ -7,12 +7,17 @@ import type {
   KnowledgeConcept,
   KnowledgeExtractionResult,
 } from "@ai2sapien/contracts";
-import type { KnowledgeExtractionStorePort } from "@ai2sapien/learning-core";
+import {
+  normalizeKnowledgePersistence,
+  type BatchCheckpoint,
+  type KnowledgeExtractionStorePort,
+} from "@ai2sapien/learning-core";
 
 interface KnowledgeDatabase {
-  schemaVersion: 1;
+  schemaVersion: 2;
   concepts: KnowledgeConcept[];
   extractions: StoredExtraction[];
+  batchCheckpoints: BatchCheckpoint[];
 }
 
 interface StoredExtraction extends KnowledgeExtractionResult {
@@ -20,9 +25,10 @@ interface StoredExtraction extends KnowledgeExtractionResult {
 }
 
 const EMPTY_DATABASE: KnowledgeDatabase = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   concepts: [],
   extractions: [],
+  batchCheckpoints: [],
 };
 
 export class KnowledgeStore implements KnowledgeExtractionStorePort {
@@ -73,6 +79,34 @@ export class KnowledgeStore implements KnowledgeExtractionStorePort {
     return stored ? stripSyncMeta(stored) : null;
   }
 
+  async listBatchCheckpoints(courseId: Id): Promise<BatchCheckpoint[]> {
+    await this.initialize();
+    return this.#database.batchCheckpoints
+      .filter((checkpoint) => checkpoint.courseId === courseId)
+      .map((checkpoint) => structuredClone(checkpoint));
+  }
+
+  async saveBatchCheckpoint(checkpoint: BatchCheckpoint): Promise<void> {
+    await this.initialize();
+    const index = this.#database.batchCheckpoints.findIndex(
+      (candidate) => candidate.courseId === checkpoint.courseId && candidate.batchId === checkpoint.batchId,
+    );
+    const stored = structuredClone(checkpoint);
+    if (index >= 0) this.#database.batchCheckpoints[index] = stored;
+    else this.#database.batchCheckpoints.push(stored);
+    await this.#persist();
+  }
+
+  async pruneBatchCheckpoints(courseId: Id, retainedBatchIds: string[]): Promise<void> {
+    await this.initialize();
+    const retained = new Set(retainedBatchIds);
+    const before = this.#database.batchCheckpoints.length;
+    this.#database.batchCheckpoints = this.#database.batchCheckpoints.filter(
+      (checkpoint) => checkpoint.courseId !== courseId || retained.has(checkpoint.batchId),
+    );
+    if (this.#database.batchCheckpoints.length !== before) await this.#persist();
+  }
+
   async listExtractions(courseId: Id): Promise<KnowledgeExtractionResult[]> {
     await this.initialize();
     return this.#database.extractions
@@ -85,7 +119,13 @@ export class KnowledgeStore implements KnowledgeExtractionStorePort {
     await mkdir(this.#rootDirectory, { recursive: true });
     try {
       const parsed = JSON.parse(await readFile(this.#databasePath, "utf8")) as unknown;
-      this.#database = validateDatabase(parsed);
+      const normalized = normalizeKnowledgePersistence(parsed);
+      this.#database = {
+        schemaVersion: 2,
+        concepts: normalized.concepts.map((concept) => structuredClone(concept)),
+        extractions: normalized.extractions as StoredExtraction[],
+        batchCheckpoints: normalized.batchCheckpoints.map((checkpoint) => structuredClone(checkpoint)),
+      };
     } catch (error) {
       const code = isNodeError(error) ? error.code : null;
       if (code !== "ENOENT") throw error;
@@ -109,18 +149,6 @@ export class KnowledgeStore implements KnowledgeExtractionStorePort {
 function stripSyncMeta(extraction: StoredExtraction): KnowledgeExtractionResult {
   const { _syncedAt: _syncedAt, ...publicResult } = extraction;
   return publicResult;
-}
-
-function validateDatabase(value: unknown): KnowledgeDatabase {
-  if (!isRecord(value) || value.schemaVersion !== 1) throw new Error("知识库数据库版本无效。");
-  if (!Array.isArray(value.concepts) || !Array.isArray(value.extractions)) {
-    throw new Error("知识库数据库结构无效。");
-  }
-  return value as unknown as KnowledgeDatabase;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
