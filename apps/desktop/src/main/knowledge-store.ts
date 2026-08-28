@@ -14,7 +14,7 @@ import {
 } from "@ai2sapien/learning-core";
 
 interface KnowledgeDatabase {
-  schemaVersion: 2;
+  schemaVersion: 3;
   concepts: KnowledgeConcept[];
   extractions: StoredExtraction[];
   batchCheckpoints: BatchCheckpoint[];
@@ -25,7 +25,7 @@ interface StoredExtraction extends KnowledgeExtractionResult {
 }
 
 const EMPTY_DATABASE: KnowledgeDatabase = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   concepts: [],
   extractions: [],
   batchCheckpoints: [],
@@ -121,7 +121,7 @@ export class KnowledgeStore implements KnowledgeExtractionStorePort {
       const parsed = JSON.parse(await readFile(this.#databasePath, "utf8")) as unknown;
       const normalized = normalizeKnowledgePersistence(parsed);
       this.#database = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         concepts: normalized.concepts.map((concept) => structuredClone(concept)),
         extractions: normalized.extractions as StoredExtraction[],
         batchCheckpoints: normalized.batchCheckpoints.map((checkpoint) => structuredClone(checkpoint)),

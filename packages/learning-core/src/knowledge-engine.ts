@@ -8,7 +8,9 @@ import type {
 
 import type { ClockPort, IdPort } from "./index.js";
 import {
+  batchLabel,
   buildBatches,
+  collectPageRefs,
   materialAnalystInstructions,
   materialAnalystPrompt,
   parseMaterialAnalysis,
@@ -16,6 +18,7 @@ import {
   validateConceptEvidence,
   validateMaterialConcept,
   type BatchCheckpoint,
+  type BatchDocument,
   type ConceptOccurrence,
   type MaterialBatch,
   type MaterialDocument,
@@ -120,7 +123,6 @@ export class KnowledgeExtractionEngine {
       throw new Error("课程资料中没有可用于知识提取的嵌入文本。");
     }
 
-    const documentIds = new Set(input.documents.map((document) => document.documentId));
     await this.#store.pruneBatchCheckpoints(courseId, batches.map((batch) => batch.batchId));
 
     const checkpoints = await this.#store.listBatchCheckpoints(courseId);
@@ -128,7 +130,6 @@ export class KnowledgeExtractionEngine {
     const reusableByBatch = new Map<string, BatchCheckpoint>();
     for (const checkpoint of checkpoints) {
       if (checkpoint.status !== "succeeded") continue;
-      if (!documentIds.has(checkpoint.documentId)) continue;
       const batch = batchById.get(checkpoint.batchId);
       if (!batch) continue;
       const validatedConcepts = validateCheckpointConcepts(checkpoint, batch);
@@ -141,8 +142,7 @@ export class KnowledgeExtractionEngine {
     const pending: MaterialBatch[] = [];
     let reusedCount = 0;
     for (const batch of batches) {
-      const reusable = reusableByBatch.get(batch.batchId);
-      if (reusable && reusable.documentId === batch.documentId && reusable.sourceVersion === batch.sourceVersion) {
+      if (reusableByBatch.has(batch.batchId)) {
         reusedCount += 1;
       } else {
         pending.push(batch);
@@ -184,7 +184,7 @@ export class KnowledgeExtractionEngine {
           await this.#store.saveBatchCheckpoint(checkpointFor(batch, input.courseId, "failed", [], message, this.#clock));
         }
         settledCount += 1;
-        this.#emitProgress(courseId, extractionId, "analyzing", settledCount, total, batch.sourceLabel);
+        this.#emitProgress(courseId, extractionId, "analyzing", settledCount, total, batchLabel(batch));
       }
     };
 
@@ -193,7 +193,7 @@ export class KnowledgeExtractionEngine {
     const workerResults = await Promise.allSettled(workers);
     const rejected = workerResults.filter((result): result is PromiseRejectedResult => result.status === "rejected");
     if (rejected.some((result) => result.reason instanceof ExtractionCancelledError)) {
-      await this.#persistPartialMap(batches, input.courseId, input.documents);
+      await this.#persistPartialMap(batches, input.courseId);
       throw new ExtractionCancelledError();
     }
     if (rejected.length > 0) {
@@ -201,7 +201,7 @@ export class KnowledgeExtractionEngine {
     }
 
     this.#emitProgress(courseId, extractionId, "merging", total, total, null);
-    const concepts = await this.#persistConceptMap(batches, input.courseId, input.documents);
+    const concepts = await this.#persistConceptMap(batches, input.courseId);
 
     const result: KnowledgeExtractionResult = {
       extractionId,
@@ -220,16 +220,12 @@ export class KnowledgeExtractionEngine {
     return result;
   }
 
-  async #persistPartialMap(batches: readonly MaterialBatch[], courseId: Id, documents: readonly MaterialDocument[]): Promise<void> {
-    await this.#persistConceptMap(batches, courseId, documents);
+  async #persistPartialMap(batches: readonly MaterialBatch[], courseId: Id): Promise<void> {
+    await this.#persistConceptMap(batches, courseId);
   }
 
-  async #persistConceptMap(
-    batches: readonly MaterialBatch[],
-    courseId: Id,
-    documents: readonly MaterialDocument[],
-  ): Promise<KnowledgeConcept[]> {
-    const occurrences = await this.#collectOccurrences(batches, courseId, documents);
+  async #persistConceptMap(batches: readonly MaterialBatch[], courseId: Id): Promise<KnowledgeConcept[]> {
+    const occurrences = await this.#collectOccurrences(batches, courseId);
     const existing = await this.#store.listConcepts(courseId);
     const concepts = rebuildConceptMap(
       courseId,
@@ -242,12 +238,7 @@ export class KnowledgeExtractionEngine {
     return concepts;
   }
 
-  async #collectOccurrences(
-    batches: readonly MaterialBatch[],
-    courseId: Id,
-    documents: readonly MaterialDocument[],
-  ): Promise<ConceptOccurrence[]> {
-    const displayNameByDocument = new Map(documents.map((document) => [document.documentId, document.displayName]));
+  async #collectOccurrences(batches: readonly MaterialBatch[], courseId: Id): Promise<ConceptOccurrence[]> {
     const checkpoints = await this.#store.listBatchCheckpoints(courseId);
     const byBatchId = new Map<string, BatchCheckpoint>();
     for (const checkpoint of checkpoints) {
@@ -262,16 +253,11 @@ export class KnowledgeExtractionEngine {
       if (!checkpoint) continue;
       const validatedConcepts = validateCheckpointConcepts(checkpoint, batch);
       if (!validatedConcepts) continue;
-      const displayName = displayNameByDocument.get(batch.documentId) ?? checkpoint.displayName;
       for (const draft of validatedConcepts) {
         occurrences.push({
           draft,
-          documentId: batch.documentId,
-          sourceVersion: batch.sourceVersion,
           batchId: batch.batchId,
-          batchSourceLabel: batch.sourceLabel,
-          displayName,
-          pageNumbers: batch.pageNumbers,
+          documents: batch.documents.map((document) => ({ ...document })),
         });
       }
     }
@@ -341,13 +327,8 @@ function validateCheckpointConcepts(
   checkpoint: BatchCheckpoint,
   batch: MaterialBatch,
 ): BatchCheckpoint["concepts"] | null {
-  if (
-    checkpoint.documentId !== batch.documentId ||
-    checkpoint.sourceVersion !== batch.sourceVersion ||
-    !Array.isArray(checkpoint.concepts)
-  ) {
-    return null;
-  }
+  if (!checkpointMatchesBatch(checkpoint, batch)) return null;
+  if (!Array.isArray(checkpoint.concepts)) return null;
 
   const concepts: BatchCheckpoint["concepts"] = [];
   for (const stored of checkpoint.concepts) {
@@ -358,6 +339,37 @@ function validateCheckpointConcepts(
     concepts.push(supported);
   }
   return concepts;
+}
+
+function checkpointMatchesBatch(checkpoint: BatchCheckpoint, batch: MaterialBatch): boolean {
+  if (checkpoint.documents.length !== batch.documents.length) return false;
+  if (checkpoint.pageRefs.length !== collectPageRefs(batch).length) return false;
+
+  const checkpointDocuments = [...checkpoint.documents].sort((left, right) => left.documentId.localeCompare(right.documentId));
+  const batchDocuments = [...batch.documents].sort((left, right) => left.documentId.localeCompare(right.documentId));
+  for (let index = 0; index < batchDocuments.length; index += 1) {
+    const stored = checkpointDocuments[index]!;
+    const current = batchDocuments[index]!;
+    if (
+      stored.documentId !== current.documentId ||
+      stored.sourceVersion !== current.sourceVersion ||
+      stored.displayName !== current.displayName
+    ) return false;
+  }
+
+  const checkpointRefs = [...checkpoint.pageRefs].sort(comparePageRefs);
+  const batchRefs = collectPageRefs(batch).sort(comparePageRefs);
+  return checkpointRefs.every((stored, index) => {
+    const current = batchRefs[index]!;
+    return stored.documentId === current.documentId && stored.pageNumber === current.pageNumber;
+  });
+}
+
+function comparePageRefs(
+  left: { documentId: string; pageNumber: number },
+  right: { documentId: string; pageNumber: number },
+): number {
+  return left.documentId.localeCompare(right.documentId) || left.pageNumber - right.pageNumber;
 }
 
 function checkpointFor(
@@ -372,17 +384,18 @@ function checkpointFor(
   return {
     courseId,
     batchId: batch.batchId,
-    documentId: batch.documentId,
-    sourceVersion: batch.sourceVersion,
-    sourceLabel: batch.sourceLabel,
-    displayName: batch.displayName,
-    pageNumbers: batch.pageNumbers,
+    documents: cloneDocuments(batch.documents),
+    pageRefs: collectPageRefs(batch),
     status,
     concepts,
     error,
     startedAt: now,
     updatedAt: now,
   };
+}
+
+function cloneDocuments(documents: readonly BatchDocument[]): BatchDocument[] {
+  return documents.map((document) => ({ ...document }));
 }
 
 /**

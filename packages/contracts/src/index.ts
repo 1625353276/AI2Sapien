@@ -382,12 +382,14 @@ export interface ProviderStatusView {
 }
 
 /**
- * A single validated quote of course material supporting a concept. `pageNumber`
- * is the concrete source page and `quote` is a short excerpt that was verified to
- * exist in that page's extracted text. The analyst may propose many evidence
- * entries, but only those that pass schema + page + quote validation survive.
+ * A single validated quote of course material supporting a concept. `documentId`
+ * and `pageNumber` identify the concrete source page and `quote` is a short
+ * excerpt that was verified to exist in that page's extracted text. The analyst
+ * may propose many evidence entries, but only those that pass schema + document +
+ * page + quote validation survive.
  */
 export interface ConceptEvidence {
+  documentId: Id;
   pageNumber: number;
   quote: string;
 }

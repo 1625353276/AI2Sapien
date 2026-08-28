@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import type { KnowledgeConcept, KnowledgeExtractionResult } from "@ai2sapien/contracts";
 
-import { buildBatches } from "./knowledge-extraction.js";
+import { buildBatches, type BatchCheckpoint, type MaterialBatch } from "./knowledge-extraction.js";
 import {
   ExtractionCancelledError,
   KnowledgeExtractionEngine,
@@ -14,7 +14,6 @@ import {
   type MaterialAnalystPort,
   type ModelStreamEvent,
 } from "./knowledge-engine.js";
-import type { BatchCheckpoint } from "./knowledge-extraction.js";
 
 const DATE = "2026-08-28T00:00:00.000Z";
 const clock = { now: () => new Date(DATE) };
@@ -34,12 +33,27 @@ function phrasePage(documentId: string, pageNumber: number, phrase: string, sour
   return { documentId, sourceVersion, pageNumber, text: `${phrase}。补充说明文字，确保本页有一定内容。` };
 }
 
-function conceptReply(title: string, pageNumber: number, quote: string): string {
+function longPage(documentId: string, pageNumber: number, phrase: string, sourceVersion = "v1") {
+  return { documentId, sourceVersion, pageNumber, text: phrase.repeat(6_000) };
+}
+
+function conceptReply(title: string, documentId: string, pageNumber: number, quote: string): string {
   return JSON.stringify({
     concepts: [
-      { title, aliases: [title], summary: "关于这个概念的一条足够长的含义与机制说明文字。", evidence: [{ pageNumber, quote }] },
+      { title, aliases: [title], summary: "关于这个概念的一条足够长的含义与机制说明文字。", evidence: [{ documentId, pageNumber, quote }] },
     ],
   });
+}
+
+function pageRefs(batch: MaterialBatch): { documentId: string; pageNumber: number }[] {
+  return batch.pages.map((entry) => ({ documentId: entry.documentId, pageNumber: entry.pageNumber }));
+}
+
+function repliesForBatches(runtime: FakeModelRuntime, batches: readonly MaterialBatch[]): void {
+  for (const item of batches) {
+    const token = `特征${String(item.pages[0]!.pageNumber)}`;
+    runtime.replies.push(conceptReply(token, item.pages[0]!.documentId, item.pages[0]!.pageNumber, token));
+  }
 }
 
 function delay(ms: number): Promise<void> {
@@ -167,11 +181,7 @@ describe("KnowledgeExtractionEngine", () => {
     const runtime = new FakeModelRuntime();
     const pages = Array.from({ length: 8 }, (_, index) => tokenPage("doc-1", index + 1, `特征${String(index + 1)}`, "v1"));
     const expectedBatches = buildBatches(documents, pages);
-    assert.equal(expectedBatches.length, 4);
-    for (const token of ["特征1", "特征3", "特征5", "特征7"]) {
-      const pageNumber = expectedBatches[["特征1", "特征3", "特征5", "特征7"].indexOf(token)]!.pageNumbers[0]!;
-      runtime.replies.push(conceptReply(token, pageNumber, token));
-    }
+    repliesForBatches(runtime, expectedBatches);
 
     const store = new MemoryStore();
     const engine = new KnowledgeExtractionEngine(runtime, store, clock, idPort);
@@ -180,14 +190,14 @@ describe("KnowledgeExtractionEngine", () => {
 
     const result = await engine.run({ courseId: "course-1", documents, pages }, "kex-1");
 
-    assert.equal(result.chunkCount, 4);
-    assert.equal(result.analyzedChunkCount, 4);
+    assert.equal(result.chunkCount, expectedBatches.length);
+    assert.equal(result.analyzedChunkCount, expectedBatches.length);
     assert.equal(result.failedChunkCount, 0);
-    assert.equal(result.concepts.length, 4);
-    assert.equal(runtime.turns, 4, "one model turn per batch");
-    assert.equal(runtime.sessionCount, 4, "an independent session is created per batch");
-    assert.equal(store.checkpoints.get("course-1")?.length, 4, "a checkpoint is persisted per settled batch");
-    assert.equal(store.saveCount.checkpoints, 4);
+    assert.equal(result.concepts.length, expectedBatches.length);
+    assert.equal(runtime.turns, expectedBatches.length, "one model turn per batch");
+    assert.equal(runtime.sessionCount, expectedBatches.length, "an independent session is created per batch");
+    assert.equal(store.checkpoints.get("course-1")?.length, expectedBatches.length, "a checkpoint is persisted per settled batch");
+    assert.equal(store.saveCount.checkpoints, expectedBatches.length);
     assert.ok((store.checkpoints.get("course-1") ?? []).every((candidate) => candidate.status === "succeeded"));
     assert.ok(phases.includes("chunking"));
     assert.ok(phases.includes("merging"));
@@ -201,10 +211,7 @@ describe("KnowledgeExtractionEngine", () => {
     runtime.turnDelayMs = 10;
     const pages = Array.from({ length: 8 }, (_, index) => tokenPage("doc-1", index + 1, `特征${String(index + 1)}`, "v1"));
     const batches = buildBatches(documents, pages);
-    for (let index = 0; index < batches.length; index += 1) {
-      const token = `特征${String(batches[index]!.pageNumbers[0]!)}`;
-      runtime.replies.push(conceptReply(token, batches[index]!.pageNumbers[0]!, token));
-    }
+    repliesForBatches(runtime, batches);
 
     const store = new MemoryStore();
     const engine = new KnowledgeExtractionEngine(runtime, store, clock, idPort);
@@ -217,12 +224,9 @@ describe("KnowledgeExtractionEngine", () => {
 
   it("resumes by reusing completed batches and skipping model calls", async () => {
     const pages = Array.from({ length: 8 }, (_, index) => tokenPage("doc-1", index + 1, `特征${String(index + 1)}`, "v1"));
-    const firstRuntime = new FakeModelRuntime();
     const batches = buildBatches(documents, pages);
-    for (let index = 0; index < batches.length; index += 1) {
-      const token = `特征${String(batches[index]!.pageNumbers[0]!)}`;
-      firstRuntime.replies.push(conceptReply(token, batches[index]!.pageNumbers[0]!, token));
-    }
+    const firstRuntime = new FakeModelRuntime();
+    repliesForBatches(firstRuntime, batches);
     const store = new MemoryStore();
     const first = new KnowledgeExtractionEngine(firstRuntime, store, clock, idPort).run({ courseId: "course-1", documents, pages }, "kex-3");
     await assert.doesNotReject(first);
@@ -232,12 +236,13 @@ describe("KnowledgeExtractionEngine", () => {
     const result = await second;
 
     assert.equal(secondRuntime.turns, 0, "no model calls on a fully-reused course");
-    assert.equal(result.reusedBatchCount, 4);
-    assert.equal(result.analyzedChunkCount, 4);
+    assert.equal(result.reusedBatchCount, batches.length);
+    assert.equal(result.analyzedChunkCount, batches.length);
     assert.equal(result.failedChunkCount, 0);
-    assert.equal(result.chunkCount, 4);
-    assert.equal(result.concepts.length, 4);
-    assert.equal(store.checkpoints.get("course-1")?.length, 4);
+    assert.equal(result.chunkCount, batches.length);
+    assert.equal(result.concepts.length, batches.length);
+    assert.equal(store.checkpoints.get("course-1")?.length, batches.length);
+    assert.ok((store.checkpoints.get("course-1") ?? []).every((candidate) => candidate.documents.length > 0 && candidate.pageRefs.length > 0));
   });
 
   it("reanalyzes a cached batch when its persisted evidence no longer validates", async () => {
@@ -247,19 +252,16 @@ describe("KnowledgeExtractionEngine", () => {
     store.seedCheckpoint({
       courseId: "course-1",
       batchId: batch.batchId,
-      documentId: batch.documentId,
-      sourceVersion: batch.sourceVersion,
-      sourceLabel: batch.sourceLabel,
-      displayName: batch.displayName,
-      pageNumbers: batch.pageNumbers,
+      documents: batch.documents,
+      pageRefs: pageRefs(batch),
       status: "succeeded",
-      concepts: [{ title: "伪造缓存", aliases: [], summary: "这是一条长度足够的缓存说明。", evidence: [{ pageNumber: 99, quote: "不存在" }] }],
+      concepts: [{ title: "伪造缓存", aliases: [], summary: "这是一条长度足够的缓存说明。", evidence: [{ documentId: "doc-1", pageNumber: 99, quote: "不存在" }] }],
       error: null,
       startedAt: DATE,
       updatedAt: DATE,
     });
     const runtime = new FakeModelRuntime();
-    runtime.replies.push(conceptReply("概念甲", 1, "甲特征"));
+    runtime.replies.push(conceptReply("概念甲", "doc-1", 1, "甲特征"));
 
     const result = await new KnowledgeExtractionEngine(runtime, store, clock, idPort).run(
       { courseId: "course-1", documents: [documents[0]!], pages },
@@ -271,17 +273,42 @@ describe("KnowledgeExtractionEngine", () => {
     assert.deepEqual(result.concepts.map((concept) => concept.title), ["概念甲"]);
   });
 
-  it("reuses unchanged documents but reanalyzes a changed document alone", async () => {
+  it("reanalyzes a cached batch when its persisted document/page metadata does not match", async () => {
+    const pages = [phrasePage("doc-1", 1, "甲特征", "v1")];
+    const batch = buildBatches([documents[0]!], pages)[0]!;
+    const store = new MemoryStore();
+    store.seedCheckpoint({
+      courseId: "course-1",
+      batchId: batch.batchId,
+      documents: batch.documents,
+      pageRefs: [{ documentId: "doc-1", pageNumber: 2 }],
+      status: "succeeded",
+      concepts: [{ title: "缓存概念", aliases: [], summary: "这是一条长度足够的缓存说明。", evidence: [{ documentId: "doc-1", pageNumber: 1, quote: "甲特征" }] }],
+      error: null,
+      startedAt: DATE,
+      updatedAt: DATE,
+    });
+    const runtime = new FakeModelRuntime();
+    runtime.replies.push(conceptReply("概念甲", "doc-1", 1, "甲特征"));
+
+    const result = await new KnowledgeExtractionEngine(runtime, store, clock, idPort).run(
+      { courseId: "course-1", documents: [documents[0]!], pages },
+      "kex-invalid-metadata",
+    );
+
+    assert.equal(runtime.turns, 1);
+    assert.equal(result.reusedBatchCount, 0);
+    assert.deepEqual(result.concepts.map((concept) => concept.title), ["概念甲"]);
+  });
+
+  it("reuses unchanged course bundles but reanalyzes the batch containing a changed document", async () => {
     const runOneDocs = [
       { documentId: "doc-1", sourceVersion: "v1", displayName: "课程.pdf" },
       { documentId: "doc-2", sourceVersion: "v1", displayName: "讲义.pdf" },
     ];
-    const runOnePages = [
-      phrasePage("doc-1", 1, "甲特征", "v1"),
-      phrasePage("doc-2", 1, "乙特征", "v1"),
-    ];
+    const runOnePages = [longPage("doc-1", 1, "甲特征", "v1"), longPage("doc-2", 1, "乙特征", "v1")];
     const firstRuntime = new FakeModelRuntime();
-    firstRuntime.replies.push(conceptReply("概念甲", 1, "甲特征"), conceptReply("概念乙", 1, "乙特征"));
+    firstRuntime.replies.push(conceptReply("概念甲", "doc-1", 1, "甲特征"), conceptReply("概念乙", "doc-2", 1, "乙特征"));
     const store = new MemoryStore();
     await new KnowledgeExtractionEngine(firstRuntime, store, clock, idPort).run({ courseId: "course-1", documents: runOneDocs, pages: runOnePages }, "kex-5");
 
@@ -289,40 +316,38 @@ describe("KnowledgeExtractionEngine", () => {
       { documentId: "doc-1", sourceVersion: "v1", displayName: "课程.pdf" },
       { documentId: "doc-2", sourceVersion: "v2", displayName: "讲义.pdf" },
     ];
-    const runTwoPages = [
-      phrasePage("doc-1", 1, "甲特征", "v1"),
-      phrasePage("doc-2", 1, "乙特征", "v2"),
-    ];
+    const runTwoPages = [longPage("doc-1", 1, "甲特征", "v1"), longPage("doc-2", 1, "乙特征", "v2")];
     const secondRuntime = new FakeModelRuntime();
-    secondRuntime.replies.push(conceptReply("概念乙", 1, "乙特征"));
+    secondRuntime.replies.push(conceptReply("概念乙", "doc-2", 1, "乙特征"));
     const result = await new KnowledgeExtractionEngine(secondRuntime, store, clock, idPort).run({ courseId: "course-1", documents: runTwoDocs, pages: runTwoPages }, "kex-6");
 
-    assert.equal(secondRuntime.turns, 1, "only the changed document is reanalyzed");
+    assert.equal(secondRuntime.turns, 1, "only the batch containing the changed document is reanalyzed");
     assert.equal(result.reusedBatchCount, 1);
     assert.equal(result.failedChunkCount, 0);
     assert.deepEqual(result.concepts.map((concept) => concept.title).sort(), ["概念乙", "概念甲"].sort());
     assert.ok(result.concepts.every((concept) => concept.sources.length === 1));
     assert.equal(store.checkpoints.get("course-1")?.length, 2, "stale checkpoints from the old document version are pruned");
-    assert.ok((store.checkpoints.get("course-1") ?? []).every((checkpoint) => checkpoint.sourceVersion === "v1" || checkpoint.sourceVersion === "v2"));
+    assert.ok((store.checkpoints.get("course-1") ?? []).every((checkpoint) => checkpoint.documents.every((document) => document.sourceVersion === "v1" || document.sourceVersion === "v2")));
   });
 
   it("removes evidence belonging to a document no longer present and prunes its checkpoints", async () => {
-    const bothDocs = documents.slice(0, 2);
-    const bothPages = [phrasePage("doc-1", 1, "甲特征", "v1"), phrasePage("doc-2", 1, "乙特征", "v1")];
+    const bothPages = [longPage("doc-1", 1, "甲特征", "v1"), longPage("doc-2", 1, "乙特征", "v1")];
     const firstRuntime = new FakeModelRuntime();
-    firstRuntime.replies.push(conceptReply("概念甲", 1, "甲特征"), conceptReply("概念乙", 1, "乙特征"));
+    firstRuntime.replies.push(conceptReply("概念甲", "doc-1", 1, "甲特征"), conceptReply("概念乙", "doc-2", 1, "乙特征"));
     const store = new MemoryStore();
-    await new KnowledgeExtractionEngine(firstRuntime, store, clock, idPort).run({ courseId: "course-1", documents: bothDocs, pages: bothPages }, "kex-7");
+    await new KnowledgeExtractionEngine(firstRuntime, store, clock, idPort).run({ courseId: "course-1", documents, pages: bothPages }, "kex-7");
 
-    const remainingDocs = [documents[0]!];
-    const remainingPages = [phrasePage("doc-1", 1, "甲特征", "v1")];
+    const remainingPages = [longPage("doc-1", 1, "甲特征", "v1")];
     const secondRuntime = new FakeModelRuntime();
-    const result = await new KnowledgeExtractionEngine(secondRuntime, store, clock, idPort).run({ courseId: "course-1", documents: remainingDocs, pages: remainingPages }, "kex-8");
+    const result = await new KnowledgeExtractionEngine(secondRuntime, store, clock, idPort).run({ courseId: "course-1", documents: [documents[0]!], pages: remainingPages }, "kex-8");
 
-    assert.equal(secondRuntime.turns, 0, "the retained document is reused");
+    assert.equal(secondRuntime.turns, 0, "the retained document's bundle is reused verbatim");
     assert.equal(result.reusedBatchCount, 1);
     assert.ok(result.concepts.every((concept) => concept.sources.every((source) => source.documentId === "doc-1")));
-    assert.equal(store.checkpoints.get("course-1")?.every((checkpoint) => checkpoint.documentId === "doc-1"), true);
+    assert.equal(
+      store.checkpoints.get("course-1")?.every((checkpoint) => checkpoint.documents.length === 1 && checkpoint.documents[0]!.documentId === "doc-1"),
+      true,
+    );
   });
 
   it("checkpoints a malformed batch as failed and keeps partial valid results", async () => {
@@ -344,7 +369,7 @@ describe("KnowledgeExtractionEngine", () => {
   it("marks a batch retryable when every proposed concept has unsupported evidence", async () => {
     const runtime = new FakeModelRuntime();
     runtime.replies.push(
-      JSON.stringify({ concepts: [{ title: "伪造概念", aliases: [], summary: "这条概念的说明文字。", evidence: [{ pageNumber: 99, quote: "不存在" }] }] }),
+      JSON.stringify({ concepts: [{ title: "伪造概念", aliases: [], summary: "这条概念的说明文字。", evidence: [{ documentId: "doc-1", pageNumber: 99, quote: "不存在" }] }] }),
     );
     const pages = [phrasePage("doc-1", 1, "甲特征", "v1")];
     const store = new MemoryStore();
@@ -362,10 +387,7 @@ describe("KnowledgeExtractionEngine", () => {
     runtime.hold();
     const pages = Array.from({ length: 8 }, (_, index) => tokenPage("doc-1", index + 1, `特征${String(index + 1)}`, "v1"));
     const batches = buildBatches(documents, pages);
-    for (let index = 0; index < batches.length; index += 1) {
-      const token = `特征${String(batches[index]!.pageNumbers[0]!)}`;
-      runtime.replies.push(conceptReply(token, batches[index]!.pageNumbers[0]!, token));
-    }
+    repliesForBatches(runtime, batches);
 
     const store = new MemoryStore();
     const engine = new KnowledgeExtractionEngine(runtime, store, clock, idPort);
@@ -397,13 +419,10 @@ describe("summarizeKnowledgeAnalysisState", () => {
       {
         courseId: "course-1",
         batchId: batches[0]!.batchId,
-        documentId: "doc-1",
-        sourceVersion: "v1",
-        sourceLabel: batches[0]!.sourceLabel,
-        displayName: "课程.pdf",
-        pageNumbers: batches[0]!.pageNumbers,
+        documents: batches[0]!.documents,
+        pageRefs: pageRefs(batches[0]!),
         status: "succeeded",
-        concepts: [{ title: "概念甲", aliases: [], summary: "这是一条长度足够的概念说明。", evidence: [{ pageNumber: 1, quote: "特征1" }] }],
+        concepts: [{ title: "概念甲", aliases: [], summary: "这是一条长度足够的概念说明。", evidence: [{ documentId: "doc-1", pageNumber: 1, quote: "特征1" }] }],
         error: null,
         startedAt: DATE,
         updatedAt: DATE,
@@ -411,11 +430,8 @@ describe("summarizeKnowledgeAnalysisState", () => {
       {
         courseId: "course-1",
         batchId: batches[1]!.batchId,
-        documentId: "doc-1",
-        sourceVersion: "v1",
-        sourceLabel: batches[1]!.sourceLabel,
-        displayName: "课程.pdf",
-        pageNumbers: batches[1]!.pageNumbers,
+        documents: batches[1]!.documents,
+        pageRefs: pageRefs(batches[1]!),
         status: "failed",
         concepts: [],
         error: "模型响应无效",

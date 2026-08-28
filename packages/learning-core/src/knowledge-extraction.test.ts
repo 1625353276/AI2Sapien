@@ -11,6 +11,7 @@ import {
   normalizeConceptTitle,
   parseMaterialAnalysis,
   rebuildConceptMap,
+  type BatchDocument,
   type ConceptOccurrence,
   type MaterialBatch,
   type MaterialDocument,
@@ -27,62 +28,94 @@ function page(documentId: string, pageNumber: number, text: string, sourceVersio
   return { documentId, sourceVersion: version, pageNumber, text };
 }
 
-function batch(
-  overrides: Partial<MaterialBatch> & { documentId: string; sourceVersion: string; pageNumbers: number[]; pages: { pageNumber: number; text: string }[] },
-): MaterialBatch {
-  const first = overrides.pageNumbers[0]!;
-  const last = overrides.pageNumbers[overrides.pageNumbers.length - 1]!;
-  const range = overrides.pageNumbers.length === 1 ? `第 ${String(first)} 页` : `第 ${String(first)}–${String(last)} 页`;
-  const displayName = overrides.displayName ?? "课程.pdf";
-  const documentId = overrides.documentId;
-  const sourceVersion = overrides.sourceVersion;
-  const pages = overrides.pages;
-  const text = pages.map((entry) => `【第 ${String(entry.pageNumber)} 页】\n${entry.text}`).join("\n\n");
+function documentBatch(overrides: { documentId: string; sourceVersion: string; displayName: string }): BatchDocument {
   return {
-    batchId: overrides.batchId ?? `${documentId}-${sourceVersion}-${pageNumbersKey(pages)}`,
-    sourceLabel: overrides.sourceLabel ?? `${displayName} · ${range}`,
-    displayName,
-    text,
-    order: overrides.order ?? 0,
-    oversized: overrides.oversized ?? false,
-    documentId,
-    sourceVersion,
-    pageNumbers: overrides.pageNumbers,
-    pages,
+    documentId: overrides.documentId,
+    sourceVersion: overrides.sourceVersion,
+    displayName: overrides.displayName,
   };
 }
 
-function pageNumbersKey(pages: { pageNumber: number }[]): string {
-  return pages.map((page) => page.pageNumber).join(".");
+function batch(
+  overrides: Partial<MaterialBatch> & { documents: BatchDocument[]; pages: { documentId: string; pageNumber: number; text: string }[] },
+): MaterialBatch {
+  const pages = overrides.pages;
+  const documents = overrides.documents;
+  const displayName = documents[0]!.displayName;
+  const text = pages.map((entry) => markerText(entry.documentId, displayName, entry.pageNumber) + entry.text).join("\n\n");
+  return {
+    batchId: overrides.batchId ?? `b-${pages.map((entry) => `${entry.documentId}-${String(entry.pageNumber)}`).join("_")}`,
+    documents,
+    pages,
+    text,
+    order: overrides.order ?? 0,
+    oversized: overrides.oversized ?? false,
+  };
+}
+
+function markerText(documentId: string, displayName: string, pageNumber: number): string {
+  return `【文档 ${documentId}「${displayName}」· 第 ${String(pageNumber)} 页】\n`;
+}
+
+function tenShortDocuments(): MaterialDocument[] {
+  return Array.from({ length: 10 }, (_, index) => ({
+    documentId: `doc-${String(index + 1)}`,
+    sourceVersion: "v1",
+    displayName: `课件${String(index + 1)}.pdf`,
+  }));
 }
 
 describe("buildBatches", () => {
-  it("packs many short pages into far fewer document-aware batches", () => {
-    const pages = Array.from({ length: 75 }, (_, index) => page("doc-1", index + 1, "词".repeat(400)));
-    const batches = buildBatches(documents, pages);
-    assert.ok(batches.length < 10, `expected few batches but got ${batches.length}`);
-    assert.ok(batches.length < pages.length, "batching must reduce call count");
+  it("packs 10 short PDFs (one page each) into fewer than 10 course-wide batches", () => {
+    const manyDocuments = tenShortDocuments();
+    const manyPages = manyDocuments.map((document, index) => page(document.documentId, 1, "概念".repeat(300)));
+    const batches = buildBatches(manyDocuments, manyPages);
+    assert.ok(batches.length < 10, `expected fewer than 10 batches but got ${batches.length}`);
+    assert.ok(batches.length < manyPages.length, "batching must reduce call count");
     for (const item of batches) {
-      assert.equal(item.documentId, "doc-1");
       assert.ok(item.text.length <= MAX_BATCH_CHARS, "every batch must stay within the hard budget");
+      assert.ok(item.documents.length > 0, "every batch retains its participating documents");
     }
   });
 
-  it("never mixes pages across documents", () => {
+  it("mixes pages from multiple documents into a shared batch within the exact char bound", () => {
+    const mixedPages = [
+      page("doc-1", 1, "甲".repeat(600)),
+      page("doc-1", 2, "乙".repeat(600)),
+      page("doc-2", 1, "丙".repeat(600)),
+      page("doc-2", 2, "丁".repeat(600)),
+    ];
+    const batches = buildBatches(documents, mixedPages);
+    assert.equal(batches.length, 1, "small pages from both documents should share one batch");
+    assert.ok(batches[0]!.text.length <= MAX_BATCH_CHARS, "a shared batch stays within the hard budget");
+    assert.deepEqual(batches[0]!.documents.map((document) => document.documentId).sort(), ["doc-1", "doc-2"]);
+    assert.ok(batches[0]!.text.includes("doc-1") && batches[0]!.text.includes("doc-2"), "markers identify both documents");
+  });
+
+  it("keeps every page whole (page boundaries) unless the page is oversized", () => {
     const pages = [
-      ...Array.from({ length: 30 }, (_, index) => page("doc-1", index + 1, "甲".repeat(800))),
-      ...Array.from({ length: 30 }, (_, index) => page("doc-2", index + 1, "乙".repeat(800))),
+      page("doc-1", 1, "一".repeat(900)),
+      page("doc-2", 1, "二".repeat(900)),
+      page("doc-1", 2, "三".repeat(900)),
     ];
     const batches = buildBatches(documents, pages);
     for (const item of batches) {
-      assert.ok(item.pageNumbers.length > 0);
+      assert.equal(item.oversized, false, "none of these pages is oversized");
+      for (const batchPage of item.pages) {
+        const original = pages.find((candidate) => candidate.documentId === batchPage.documentId && candidate.pageNumber === batchPage.pageNumber)!;
+        assert.equal(batchPage.text, original.text.trim(), "page text must be packed whole, never split");
+      }
     }
-    const docOne = batches.filter((item) => item.documentId === "doc-1");
-    const docTwo = batches.filter((item) => item.documentId === "doc-2");
-    assert.ok(docOne.length > 0);
-    assert.ok(docTwo.length > 0);
-    for (const item of docOne) assert.equal(item.documentId, "doc-1");
-    for (const item of docTwo) assert.equal(item.documentId, "doc-2");
+  });
+
+  it("windows a page whose rendered marker pushes it just over the exact bound", () => {
+    const text = "字".repeat(MAX_BATCH_CHARS - 1);
+    const batches = buildBatches(documents, [page("doc-1", 3, text)]);
+    assert.ok(batches.length > 0);
+    for (const item of batches) {
+      assert.equal(item.oversized, true, "the page's rendered form exceeds the bound so it is windowed");
+      assert.ok(item.text.length <= MAX_BATCH_CHARS, "every windowed batch stays within the exact bound");
+    }
   });
 
   it("windows an oversized single page into bounded overlapping batches referencing that page", () => {
@@ -90,8 +123,8 @@ describe("buildBatches", () => {
     const batches = buildBatches(documents, [page("doc-1", 3, longText)]);
     assert.ok(batches.length > 1, "an oversized page must split into multiple batches");
     for (const item of batches) {
-      assert.equal(item.documentId, "doc-1");
-      assert.deepEqual(item.pageNumbers, [3]);
+      assert.deepEqual(item.documents.map((document) => document.documentId), ["doc-1"]);
+      assert.deepEqual(item.pages.map((batchPage) => [batchPage.documentId, batchPage.pageNumber]), [["doc-1", 3]]);
       assert.equal(item.oversized, true);
       assert.ok(item.text.length <= MAX_BATCH_CHARS, "windowed batches stay within the budget");
     }
@@ -110,7 +143,7 @@ describe("buildBatches", () => {
   it("ignores pages without extractable text", () => {
     const batches = buildBatches(documents, [page("doc-1", 1, "   "), page("doc-1", 2, "正文")]);
     assert.equal(batches.length, 1);
-    assert.deepEqual(batches[0]!.pageNumbers, [2]);
+    assert.deepEqual(batches[0]!.pages.map((item) => [item.documentId, item.pageNumber]), [["doc-1", 2]]);
   });
 
   it("is deterministic across runs, and the overlap constant is bounded", () => {
@@ -125,30 +158,28 @@ describe("buildBatches", () => {
 describe("parseMaterialAnalysis / validateConceptEvidence", () => {
   const single = batch({
     batchId: "b1",
-    documentId: "doc-1",
-    sourceVersion: "v1",
-    pageNumbers: [1, 2],
+    documents: [documentBatch({ documentId: "doc-1", sourceVersion: "v1", displayName: "课程.pdf" })],
     pages: [
-      { pageNumber: 1, text: "坐标轴用于表示数值刻度。" },
-      { pageNumber: 2, text: "图例解释图表中的符号含义。" },
+      { documentId: "doc-1", pageNumber: 1, text: "坐标轴用于表示数值刻度。" },
+      { documentId: "doc-1", pageNumber: 2, text: "图例解释图表中的符号含义。" },
     ],
-    displayName: "课程.pdf",
   });
 
-  it("retains only evidence whose page is in the batch and whose quote is present", () => {
+  it("retains only evidence whose document+page is in the batch and whose quote is present", () => {
     const result = parseMaterialAnalysis(
       `{"concepts":[{"title":"坐标轴","aliases":["y轴"],"summary":"数值量级刻度轴，用于表达尺度。",
-        "evidence":[{"pageNumber":1,"quote":"坐标轴用于表示数值刻度"},{"pageNumber":99,"quote":"不存在"},{"pageNumber":1,"quote":"完全不存在的引文"}]}]}`,
+        "evidence":[{"documentId":"doc-1","pageNumber":1,"quote":"坐标轴用于表示数值刻度"},{"documentId":"doc-1","pageNumber":99,"quote":"不存在"},{"documentId":"doc-1","pageNumber":1,"quote":"完全不存在的引文"}]}]}`,
       single,
     );
     assert.equal(result.valid, true);
     assert.equal(result.concepts.length, 1);
     assert.deepEqual(result.concepts[0]!.evidence.map((entry) => entry.quote), ["坐标轴用于表示数值刻度"]);
+    assert.equal(result.concepts[0]!.evidence[0]!.documentId, "doc-1");
   });
 
   it("rejects a concept whose only evidence is on a wrong page", () => {
     const result = parseMaterialAnalysis(
-      `{"concepts":[{"title":"幽灵概念","aliases":[],"summary":"这个概念的说明文字。","evidence":[{"pageNumber":99,"quote":"坐标轴"}]}]}`,
+      `{"concepts":[{"title":"幽灵概念","aliases":[],"summary":"这个概念的说明文字。","evidence":[{"documentId":"doc-1","pageNumber":99,"quote":"坐标轴"}]}]}`,
       single,
     );
     assert.equal(result.valid, false);
@@ -156,21 +187,44 @@ describe("parseMaterialAnalysis / validateConceptEvidence", () => {
     assert.ok(result.errors.some((error) => error.includes("证据")));
   });
 
-  it("rejects a concept whose quote does not appear in the claimed page", () => {
+  it("rejects a concept whose only evidence is on the right page of the wrong document", () => {
     const result = parseMaterialAnalysis(
-      `{"concepts":[{"title":"伪造概念","aliases":[],"summary":"这个概念的说明文字。","evidence":[{"pageNumber":2,"quote":"完全不存在的引文内容"}]}]}`,
+      `{"concepts":[{"title":"串文档概念","aliases":[],"summary":"这个概念的说明文字。","evidence":[{"documentId":"doc-2","pageNumber":2,"quote":"图例解释图表中的符号含义"}]}]}`,
       single,
     );
     assert.equal(result.valid, false);
     assert.equal(result.concepts.length, 0);
   });
 
-  it("accepts a well-formed concept spread across multiple pages", () => {
+  it("rejects a concept whose quote does not appear in the claimed page", () => {
     const result = parseMaterialAnalysis(
-      `{"concepts":[{"title":"坐标轴","aliases":["Y 轴"],"summary":"承载数值量级的刻度轴。","evidence":[{"pageNumber":1,"quote":"坐标轴用于表示数值刻度"},{"pageNumber":2,"quote":"图例解释图表中的符号含义"}]}]}`,
+      `{"concepts":[{"title":"伪造概念","aliases":[],"summary":"这个概念的说明文字。","evidence":[{"documentId":"doc-1","pageNumber":2,"quote":"完全不存在的引文内容"}]}]}`,
+      single,
+    );
+    assert.equal(result.valid, false);
+    assert.equal(result.concepts.length, 0);
+  });
+
+  it("accepts a well-formed concept spread across multiple pages of one document", () => {
+    const result = parseMaterialAnalysis(
+      `{"concepts":[{"title":"坐标轴","aliases":["Y 轴"],"summary":"承载数值量级的刻度轴。","evidence":[{"documentId":"doc-1","pageNumber":1,"quote":"坐标轴用于表示数值刻度"},{"documentId":"doc-1","pageNumber":2,"quote":"图例解释图表中的符号含义"}]}]}`,
       single,
     );
     assert.equal(result.concepts.length, 1);
+    assert.equal(result.concepts[0]!.evidence.length, 2);
+  });
+
+  it("accepts evidence that combines pages across multiple documents of a shared batch", () => {
+    const shared = buildBatches(documents, [
+      page("doc-1", 1, "甲特征：数据可视化基础。" ),
+      page("doc-2", 1, "乙特征：信息设计原则。" ),
+    ]);
+    assert.equal(shared.length, 1);
+    const result = parseMaterialAnalysis(
+      `{"concepts":[{"title":"可视化","aliases":[],"summary":"将数据编码为图形以传达含义。","evidence":[{"documentId":"doc-1","pageNumber":1,"quote":"甲特征：数据可视化基础"},{"documentId":"doc-2","pageNumber":1,"quote":"乙特征：信息设计原则"}]}]}`,
+      shared[0]!,
+    );
+    assert.equal(result.valid, true);
     assert.equal(result.concepts[0]!.evidence.length, 2);
   });
 
@@ -181,7 +235,7 @@ describe("parseMaterialAnalysis / validateConceptEvidence", () => {
       title: `概念${String(index)}`,
       aliases: [],
       summary: "含义与机制说明。",
-      evidence: [{ pageNumber: 1, quote: "坐标轴" }],
+      evidence: [{ documentId: "doc-1", pageNumber: 1, quote: "坐标轴" }],
     }));
     const { concepts } = parseMaterialAnalysis(`{"concepts":${JSON.stringify(many)}}`, single);
     assert.ok(concepts.length <= MAX_CONCEPTS_PER_BATCH);
@@ -203,36 +257,92 @@ describe("rebuildConceptMap", () => {
   it("merges duplicate titles while preserving every document/page/quote source", () => {
     const occurrences: ConceptOccurrence[] = [
       {
-        draft: { title: "坐标轴", aliases: ["坐标轴"], summary: "第一种解释较短。", evidence: [{ pageNumber: 1, quote: "坐标轴用于表示数值刻度" }] },
-        documentId: "doc-1", sourceVersion: "v1", batchId: "b1", batchSourceLabel: "课程.pdf · 第 1 页", displayName: "课程.pdf", pageNumbers: [1],
+        draft: {
+          title: "坐标轴",
+          aliases: ["坐标轴"],
+          summary: "第一种解释较短。",
+          evidence: [{ documentId: "doc-1", pageNumber: 1, quote: "坐标轴用于表示数值刻度" }],
+        },
+        batchId: "b1",
+        documents: [documentBatch({ documentId: "doc-1", sourceVersion: "v1", displayName: "课程.pdf" })],
       },
       {
-        draft: { title: " 坐标轴 ", aliases: ["轴系"], summary: "第二种解释，更长的一种说明方式以覆盖更多机制。", evidence: [{ pageNumber: 2, quote: "图例解释图表中的符号含义" }] },
-        documentId: "doc-2", sourceVersion: "v2", batchId: "b2", batchSourceLabel: "讲义.pdf · 第 2 页", displayName: "讲义.pdf", pageNumbers: [2],
+        draft: {
+          title: " 坐标轴 ",
+          aliases: ["轴系"],
+          summary: "第二种解释，更长的一种说明方式以覆盖更多机制。",
+          evidence: [{ documentId: "doc-2", pageNumber: 2, quote: "图例解释图表中的符号含义" }],
+        },
+        batchId: "b2",
+        documents: [documentBatch({ documentId: "doc-2", sourceVersion: "v2", displayName: "讲义.pdf" })],
       },
     ];
     const merged = rebuildConceptMap("course-1", occurrences, [], nextId, clockNow);
     assert.equal(merged.length, 1);
     assert.equal(merged[0]!.title, "坐标轴");
     assert.deepEqual(merged[0]!.sources.map((source) => source.sourceLabel), ["课程.pdf · 第 1 页", "讲义.pdf · 第 2 页"]);
+    assert.deepEqual(merged[0]!.sources.map((source) => source.documentId), ["doc-1", "doc-2"]);
     assert.ok(merged[0]!.aliases.length >= 2);
     assert.ok(merged[0]!.evidenceRefs.length >= 2);
     assert.equal(merged[0]!.sources[0]!.evidence?.length, 1);
+    assert.equal(merged[0]!.sources[0]!.evidence![0]!.documentId, "doc-1");
     assert.equal(merged[0]!.sources[0]!.evidence![0]!.quote, "坐标轴用于表示数值刻度");
+  });
+
+  it("resolves sources per evidence entry inside a multi-document batch", () => {
+    const occurrences: ConceptOccurrence[] = [
+      {
+        draft: {
+          title: "可视化",
+          aliases: [],
+          summary: "将数据编码为图形以传达信息，是一套设计原则。",
+          evidence: [
+            { documentId: "doc-1", pageNumber: 1, quote: "甲特征：数据可视化基础" },
+            { documentId: "doc-2", pageNumber: 3, quote: "乙特征：信息设计原则" },
+          ],
+        },
+        batchId: "b-shared",
+        documents: [
+          documentBatch({ documentId: "doc-1", sourceVersion: "v1", displayName: "课程.pdf" }),
+          documentBatch({ documentId: "doc-2", sourceVersion: "v2", displayName: "讲义.pdf" }),
+        ],
+      },
+    ];
+    const merged = rebuildConceptMap("course-1", occurrences, [], nextId, clockNow);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]!.sources.length, 2);
+    assert.deepEqual(
+      merged[0]!.sources.map((source) => [source.documentId, source.pageNumber]),
+      [["doc-1", 1], ["doc-2", 3]],
+    );
+    assert.deepEqual(merged[0]!.sources.map((source) => source.sourceVersion), ["v1", "v2"]);
+    assert.deepEqual(merged[0]!.sources.map((source) => source.sourceLabel), ["课程.pdf · 第 1 页", "讲义.pdf · 第 3 页"]);
   });
 
   it("reuses stable ids for unchanged normalized titles", () => {
     const existing: KnowledgeConcept[] = [
       {
-        id: "concept-fixed", courseId: "course-1", title: "坐标轴", aliases: ["旧别称"], summary: "旧解释",
+        id: "concept-fixed",
+        courseId: "course-1",
+        title: "坐标轴",
+        aliases: ["旧别称"],
+        summary: "旧解释",
         sources: [{ documentId: "doc-0", sourceVersion: "v0", pageNumber: 5, sourceLabel: "旧.pdf · 第 5 页", excerpt: "旧来源", evidenceRefs: ["旧依据"] }],
-        evidenceRefs: ["旧依据"], createdAt: "2026-08-27T00:00:00.000Z", updatedAt: "2026-08-27T00:00:00.000Z",
+        evidenceRefs: ["旧依据"],
+        createdAt: "2026-08-27T00:00:00.000Z",
+        updatedAt: "2026-08-27T00:00:00.000Z",
       },
     ];
     const occurrences: ConceptOccurrence[] = [
       {
-        draft: { title: "坐标轴", aliases: ["新别称"], summary: "新解释更完整一些。", evidence: [{ pageNumber: 3, quote: "坐标轴用于表示数值刻度" }] },
-        documentId: "doc-1", sourceVersion: "v1", batchId: "b1", batchSourceLabel: "课程.pdf · 第 3 页", displayName: "课程.pdf", pageNumbers: [3],
+        draft: {
+          title: "坐标轴",
+          aliases: ["新别称"],
+          summary: "新解释更完整一些。",
+          evidence: [{ documentId: "doc-1", pageNumber: 3, quote: "坐标轴用于表示数值刻度" }],
+        },
+        batchId: "b1",
+        documents: [documentBatch({ documentId: "doc-1", sourceVersion: "v1", displayName: "课程.pdf" })],
       },
     ];
     const merged = rebuildConceptMap("course-1", occurrences, existing, nextId, clockNow);
@@ -245,15 +355,27 @@ describe("rebuildConceptMap", () => {
   it("drops concepts that no longer have any validated occurrence", () => {
     const existing: KnowledgeConcept[] = [
       {
-        id: "concept-gone", courseId: "course-1", title: "已删除概念", aliases: [], summary: "只存在于已删除文档。",
+        id: "concept-gone",
+        courseId: "course-1",
+        title: "已删除概念",
+        aliases: [],
+        summary: "只存在于已删除文档。",
         sources: [{ documentId: "doc-2", sourceVersion: "v2", pageNumber: 1, sourceLabel: "讲义.pdf · 第 1 页", excerpt: "旧", evidenceRefs: ["旧"] }],
-        evidenceRefs: ["旧"], createdAt: "2026-08-27T00:00:00.000Z", updatedAt: "2026-08-27T00:00:00.000Z",
+        evidenceRefs: ["旧"],
+        createdAt: "2026-08-27T00:00:00.000Z",
+        updatedAt: "2026-08-27T00:00:00.000Z",
       },
     ];
     const occurrences: ConceptOccurrence[] = [
       {
-        draft: { title: "仍在概念", aliases: [], summary: "仍然存在的概念的说明。", evidence: [{ pageNumber: 1, quote: "坐标轴用于表示数值刻度" }] },
-        documentId: "doc-1", sourceVersion: "v1", batchId: "b1", batchSourceLabel: "课程.pdf · 第 1 页", displayName: "课程.pdf", pageNumbers: [1],
+        draft: {
+          title: "仍在概念",
+          aliases: [],
+          summary: "仍然存在的概念的说明。",
+          evidence: [{ documentId: "doc-1", pageNumber: 1, quote: "坐标轴用于表示数值刻度" }],
+        },
+        batchId: "b1",
+        documents: [documentBatch({ documentId: "doc-1", sourceVersion: "v1", displayName: "课程.pdf" })],
       },
     ];
     const merged = rebuildConceptMap("course-1", occurrences, existing, nextId, clockNow);
